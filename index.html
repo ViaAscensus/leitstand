@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leitstand</title>
+<style>
+/*
+  Leitwarte / control-room panel: a status strip of live counters across
+  the top, projects below as short instrument tiles in a wrapping grid;
+  clicking one opens a dedicated detail panel with the full record.
+  Deliberately single dark theme: a control room is dark by trade, not
+  by default.
+*/
+:root{
+  --bg:#0a0e13;
+  --panel:#121922;
+  --panel-2:#0d1319;
+  --border:#223040;
+  --fg:#e7edf3;
+  --muted:#80909f;
+  --accent:#45d6c4;
+  --accent-dim:rgba(69,214,196,.16);
+  --s-offen:#6b7a8f;
+  --s-arbeit:#5b9dff;
+  --s-wartet:#f2b84b;
+  --s-erledigt:#43c98a;
+  --s-pausiert:#c4713f;
+  color-scheme: dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg);
+  color:var(--fg);
+  font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  padding:0 20px;
+}
+a{color:var(--accent)}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 0 60px}
+
+.topbar{
+  display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;
+  justify-content:space-between;margin-bottom:28px;
+}
+.brand{display:flex;align-items:baseline;gap:10px;min-width:0}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px 2px var(--accent-dim);flex:none}
+.brand h1{
+  font-size:1.3rem;letter-spacing:.14em;text-transform:uppercase;
+  font-weight:600;margin:0;white-space:nowrap;
+}
+.brand .sub{color:var(--muted);font-size:.8rem;margin:0}
+.topright{display:flex;align-items:center;gap:14px}
+.clock{
+  font-family:'IBM Plex Mono',monospace;color:var(--muted);
+  font-size:.82rem;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;
+}
+.clock b{color:var(--fg);font-weight:500}
+
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px}
+.stat{
+  background:var(--panel);border:1px solid var(--border);border-radius:10px;
+  padding:10px 14px;min-width:108px;flex:1 1 108px;
+}
+.stat .n{
+  font-family:'IBM Plex Mono',monospace;font-size:1.5rem;font-weight:600;
+  font-variant-numeric:tabular-nums;line-height:1.1;
+}
+.stat .l{color:var(--muted);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;margin-top:4px}
+
+.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap}
+.toolbar h2{font-size:.82rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;margin:0}
+button{
+  font-family:inherit;border:1px solid var(--border);background:var(--panel);
+  color:var(--fg);border-radius:8px;padding:8px 14px;font-size:.85rem;cursor:pointer;
+}
+button:hover{border-color:var(--accent)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.primary{background:var(--accent);color:#06211c;border-color:var(--accent);font-weight:600}
+button.primary:hover{filter:brightness(1.08)}
+button.ghost{background:transparent}
+button.link{background:transparent;border-color:transparent;color:var(--accent);padding:4px 0;font-weight:500}
+button.link:hover{text-decoration:underline;border-color:transparent}
+button.danger{border-color:var(--s-pausiert);color:var(--s-pausiert);background:transparent}
+button.danger:hover{background:rgba(196,113,63,.12)}
+button.small{padding:5px 10px;font-size:.78rem}
+button[disabled]{opacity:.45;cursor:default}
+
+.grid{
+  display:grid;gap:14px;
+  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+}
+.card{
+  background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--s-offen);
+  border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0;
+}
+.card .cardtop{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card h3{margin:0;font-size:1rem;font-weight:600;word-wrap:break-word;cursor:pointer}
+.card h3:hover{color:var(--accent)}
+.card .field-label{color:var(--muted);font-size:.68rem;letter-spacing:.07em;text-transform:uppercase;margin:0 0 3px}
+
+.bullets{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.bullets li{display:flex;gap:8px;font-size:.88rem;line-height:1.5;word-wrap:break-word}
+.bullets li::before{content:"•";color:var(--accent);flex:none}
+.card .bullets{font-size:.84rem;color:var(--muted)}
+.more{margin:0;color:var(--muted);font-size:.78rem;font-style:italic}
+.empty-hint{margin:0;color:var(--muted);font-size:.84rem;font-style:italic}
+
+.pill{
+  display:inline-flex;align-items:center;gap:6px;border-radius:999px;
+  padding:4px 10px 4px 8px;font-size:.74rem;font-weight:500;border:1px solid var(--border);
+  background:var(--panel-2);width:fit-content;flex:none;
+}
+.pill .sw{width:8px;height:8px;border-radius:50%;flex:none}
+select.statusselect{
+  font-family:inherit;background:var(--panel-2);color:var(--fg);border:1px solid var(--border);
+  border-radius:999px;padding:4px 10px;font-size:.74rem;cursor:pointer;
+}
+
+.cardfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;border-top:1px solid var(--border);padding-top:10px}
+.ts{font-family:'IBM Plex Mono',monospace;color:var(--muted);font-size:.7rem;font-variant-numeric:tabular-nums}
+.actions{display:flex;gap:6px;flex:none}
+
+textarea,input.textin{
+  font-family:inherit;background:var(--panel-2);color:var(--fg);border:1px solid var(--border);
+  border-radius:8px;padding:8px;font-size:.88rem;width:100%;resize:vertical;
+}
+textarea{min-height:64px;line-height:1.5}
+.formrow{display:flex;flex-direction:column;gap:4px}
+.formactions{display:flex;gap:8px;justify-content:flex-end}
+
+.empty{
+  border:1px dashed var(--border);border-radius:10px;padding:40px 20px;text-align:center;
+  color:var(--muted);
+}
+.empty b{color:var(--fg);display:block;margin-bottom:6px;font-size:1rem}
+
+.offline{color:var(--s-wartet);font-size:.85rem;border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:16px}
+
+.detailpanel{background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--s-offen);border-radius:12px;padding:22px;max-width:760px}
+.detailback{margin-bottom:16px}
+.detailhead{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:18px}
+.detailhead h2{margin:0;font-size:1.4rem;font-weight:600;min-width:0;word-wrap:break-word}
+.detailsection{margin-bottom:18px}
+.detailsection .field-label{color:var(--muted);font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;margin:0 0 6px}
+.detailsection .bullets{gap:13px}
+.detailsection .bullets li{font-size:.95rem;line-height:1.6}
+.detailfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:22px;border-top:1px solid var(--border);padding-top:14px;flex-wrap:wrap}
+
+.loginwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.loginbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:360px;width:100%}
+.loginbox h1{font-size:1.1rem;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px}
+.loginbox .sub{color:var(--muted);font-size:.8rem;margin:0 0 20px}
+.loginerr{color:var(--s-pausiert);font-size:.82rem;margin:10px 0 0;min-height:1.2em}
+
+[hidden]{display:none!important}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div id="loginview" class="loginwrap" hidden>
+  <div class="loginbox">
+    <h1>Leitstand</h1>
+    <p class="sub">Anmeldung mit PocketBase-Zugangsdaten</p>
+    <form id="loginForm">
+      <div class="formrow"><input class="textin" id="loginEmail" type="email" placeholder="E-Mail" autocomplete="username" required></div>
+      <div class="formrow" style="margin-top:10px"><input class="textin" id="loginPassword" type="password" placeholder="Passwort" autocomplete="current-password" required></div>
+      <button class="primary" type="submit" style="width:100%;margin-top:16px" id="loginSubmit">Anmelden</button>
+      <p class="loginerr" id="loginErr"></p>
+    </form>
+  </div>
+</div>
+
+<div id="appview" hidden>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <h1>Leitstand</h1>
+        <p class="sub">Projektübersicht &amp; Stand</p>
+      </div>
+    </div>
+    <div class="topright">
+      <div class="clock" id="clock">— —</div>
+      <button class="ghost small" id="btnLogout">Abmelden</button>
+    </div>
+  </div>
+
+  <div id="offline" class="offline" hidden>Keine Verbindung zu PocketBase — Ansicht ist nicht aktuell.</div>
+
+  <div id="listview">
+    <div class="stats" id="stats"></div>
+
+    <div class="toolbar">
+      <h2>Projekte</h2>
+      <button class="primary" id="btnNew">+ Neues Projekt</button>
+    </div>
+
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" hidden>
+      <b>Noch kein Projekt erfasst.</b>
+      Lege das erste an — Stand und nächste Schritte lassen sich jederzeit nachtragen.
+    </div>
+  </div>
+
+  <div id="detailview" hidden></div>
+</div>
+</div>
+
+<script>
+(function(){
+  const PB_URL = 'https://pb.ascensus.fit';
+  const AUTH_COLLECTION = 'api_clients';
+  const DATA_COLLECTION = 'projekte';
+  const AUTH_STORAGE_KEY = 'leitstand_pb_auth';
+  const POLL_MS = 25000;
+
+  const STATUS = {
+    offen:              {label:'Offen',               css:'--s-offen'},
+    in_arbeit:          {label:'In Arbeit',            css:'--s-arbeit'},
+    wartet_auf_freigabe:{label:'Wartet auf Freigabe',  css:'--s-wartet'},
+    erledigt:           {label:'Erledigt',             css:'--s-erledigt'},
+    pausiert:           {label:'Pausiert',             css:'--s-pausiert'}
+  };
+  const STATUS_ORDER = ['offen','in_arbeit','wartet_auf_freigabe','erledigt','pausiert'];
+
+  const loginview = document.getElementById('loginview');
+  const appview = document.getElementById('appview');
+  const loginForm = document.getElementById('loginForm');
+  const loginErr = document.getElementById('loginErr');
+  const loginSubmit = document.getElementById('loginSubmit');
+  const btnLogout = document.getElementById('btnLogout');
+
+  const listview = document.getElementById('listview');
+  const detailview = document.getElementById('detailview');
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  const statsEl = document.getElementById('stats');
+  const offlineEl = document.getElementById('offline');
+  const btnNew = document.getElementById('btnNew');
+  const clockEl = document.getElementById('clock');
+
+  let docs = [];
+  let loaded = false;
+  let showNewForm = false;
+  let detailEditing = false;
+  let detailConfirmingDelete = false;
+  let authToken = null;
+  let pollHandle = null;
+
+  // ---------- helpers ----------
+  function esc(s){
+    return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function fmtTs(iso){
+    if(!iso) return '—';
+    try{
+      const d = new Date(iso);
+      return d.toLocaleString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    }catch(e){ return '—'; }
+  }
+  function nowIso(){ return new Date().toISOString(); }
+  function splitBullets(text){
+    let items = String(text||'').split('\n').map(s=>s.trim()).filter(Boolean);
+    if(items.length<=1){
+      const single = items[0] || '';
+      if(single.indexOf(' · ')!==-1){
+        items = single.split(' · ').map(s=>s.trim()).filter(Boolean);
+      }
+    }
+    return items;
+  }
+  function bulletsHtml(text, limit, emptyHint){
+    const items = splitBullets(text);
+    if(!items.length) return '<p class="empty-hint">'+esc(emptyHint||'Noch nichts erfasst.')+'</p>';
+    const shown = limit ? items.slice(0, limit) : items;
+    let html = '<ul class="bullets">'+shown.map(i=>'<li>'+esc(i)+'</li>').join('')+'</ul>';
+    if(limit && items.length>limit){
+      html += '<p class="more">+'+(items.length-limit)+' weitere</p>';
+    }
+    return html;
+  }
+  function openDetail(id){ location.hash = id; }
+  function closeDetail(){ history.length>1 ? history.back() : (location.hash=''); }
+  function currentId(){
+    const h = location.hash.replace(/^#/,'');
+    return h || null;
+  }
+
+  // ---------- auth storage ----------
+  function loadAuth(){
+    try{
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ return null; }
+  }
+  function saveAuth(token, record){
+    try{ localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({token, record})); }catch(e){}
+  }
+  function clearAuth(){
+    try{ localStorage.removeItem(AUTH_STORAGE_KEY); }catch(e){}
+  }
+
+  // ---------- PocketBase client ----------
+  async function pbRaw(path, opts){
+    opts = opts || {};
+    const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+    if(authToken) headers['Authorization'] = authToken; // dieser Server erwartet den Token pur, ohne "Bearer"
+    const res = await fetch(PB_URL+path, Object.assign({}, opts, {headers}));
+    let data = null;
+    try{ data = await res.json(); }catch(e){}
+    return {status: res.status, data};
+  }
+  async function pbLogin(identity, password){
+    const r = await pbRaw('/api/collections/'+AUTH_COLLECTION+'/auth-with-password', {
+      method:'POST', body: JSON.stringify({identity, password})
+    });
+    if(r.status===200 && r.data && r.data.token){
+      authToken = r.data.token;
+      saveAuth(r.data.token, r.data.record);
+      return true;
+    }
+    return false;
+  }
+  async function pbRefresh(){
+    const r = await pbRaw('/api/collections/'+AUTH_COLLECTION+'/auth-refresh', {method:'POST'});
+    if(r.status===200 && r.data && r.data.token){
+      authToken = r.data.token;
+      saveAuth(r.data.token, r.data.record);
+      return true;
+    }
+    return false;
+  }
+  async function pbList(){
+    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records?sort=-aktualisiert&perPage=200');
+    if(r.status===401){ onAuthLost(); return null; }
+    if(r.status!==200 || !r.data) return null;
+    return r.data.items || [];
+  }
+  async function pbCreate(fields){
+    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records', {method:'POST', body:JSON.stringify(fields)});
+    if(r.status===401){ onAuthLost(); return null; }
+    return (r.status===200||r.status===201) ? r.data : null;
+  }
+  async function pbUpdate(id, fields){
+    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'PATCH', body:JSON.stringify(fields)});
+    if(r.status===401){ onAuthLost(); return null; }
+    return (r.status===200||r.status===201) ? r.data : null;
+  }
+  async function pbDelete(id){
+    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'DELETE'});
+    if(r.status===401){ onAuthLost(); return false; }
+    return r.status===204 || r.status===200;
+  }
+  function onAuthLost(){
+    authToken = null;
+    clearAuth();
+    stopPolling();
+    showLogin('Sitzung abgelaufen — bitte erneut anmelden.');
+  }
+
+  // ---------- login UI ----------
+  function showLogin(err){
+    loginview.hidden = false;
+    appview.hidden = true;
+    loginErr.textContent = err || '';
+  }
+  function showApp(){
+    loginview.hidden = true;
+    appview.hidden = false;
+  }
+  loginForm.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const email = document.getElementById('loginEmail').value.trim();
+    const pw = document.getElementById('loginPassword').value;
+    loginSubmit.disabled = true;
+    loginErr.textContent = '';
+    try{
+      const ok = await pbLogin(email, pw);
+      if(ok){ await bootApp(); }
+      else { loginErr.textContent = 'Anmeldung fehlgeschlagen — E-Mail/Passwort prüfen.'; }
+    }catch(e){
+      loginErr.textContent = 'Keine Verbindung zu PocketBase.';
+    }
+    loginSubmit.disabled = false;
+  });
+  btnLogout.onclick = ()=>{
+    authToken = null;
+    clearAuth();
+    stopPolling();
+    location.hash = '';
+    showLogin();
+  };
+
+  // ---------- clock ----------
+  function tickClock(){
+    const d = new Date();
+    const date = d.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'});
+    const time = d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    clockEl.innerHTML = esc(date) + ' &middot; <b>' + esc(time) + '</b>';
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  // ---------- rendering ----------
+  function renderStats(){
+    const counts = {};
+    STATUS_ORDER.forEach(k=>counts[k]=0);
+    docs.forEach(d=>{ if(counts[d.status]!=null) counts[d.status]++; });
+    statsEl.innerHTML = STATUS_ORDER.map(k=>(
+      '<div class="stat" style="border-left:3px solid var('+STATUS[k].css+')">'+
+        '<div class="n">'+counts[k]+'</div>'+
+        '<div class="l">'+esc(STATUS[k].label)+'</div>'+
+      '</div>'
+    )).join('');
+  }
+  function statusOptions(selected){
+    return STATUS_ORDER.map(k=>'<option value="'+k+'"'+(k===selected?' selected':'')+'>'+esc(STATUS[k].label)+'</option>').join('');
+  }
+  function newFormHtml(){
+    return (
+      '<div class="card" style="border-left-color:var(--accent)">'+
+        '<div class="formrow"><input class="textin" id="newName" placeholder="Projektname" /></div>'+
+        '<div class="formrow"><label class="field-label">Stand (ein Punkt pro Zeile)</label><textarea id="newStand" placeholder="Was ist bisher passiert?&#10;Ein Punkt pro Zeile"></textarea></div>'+
+        '<div class="formrow"><label class="field-label">Nächste Schritte (ein Punkt pro Zeile)</label><textarea id="newSchritte" placeholder="Was ist noch zu tun?&#10;Ein Punkt pro Zeile"></textarea></div>'+
+        '<div class="formactions">'+
+          '<button class="ghost small" id="newCancel">Abbrechen</button>'+
+          '<button class="primary small" id="newSave">Anlegen</button>'+
+        '</div>'+
+      '</div>'
+    );
+  }
+  function cardHtml(d){
+    const st = STATUS[d.status] || STATUS.offen;
+    return (
+      '<div class="card" style="border-left-color:var('+st.css+')" data-id="'+d.id+'">'+
+        '<div class="cardtop">'+
+          '<span class="pill"><span class="sw" style="background:var('+st.css+')"></span>'+esc(st.label)+'</span>'+
+          '<span class="ts">'+fmtTs(d.aktualisiert)+'</span>'+
+        '</div>'+
+        '<h3 data-act="open" data-id="'+d.id+'">'+esc(d.name)+'</h3>'+
+        bulletsHtml(d.schritte, 3, 'Noch keine nächsten Schritte erfasst.')+
+        '<button class="link small" data-act="open" data-id="'+d.id+'">Mehr Details &rarr;</button>'+
+      '</div>'
+    );
+  }
+  function renderList(){
+    renderStats();
+    empty.hidden = !(loaded && docs.length===0 && !showNewForm);
+    const parts = [];
+    if(showNewForm) parts.push(newFormHtml());
+    docs.forEach(d=>parts.push(cardHtml(d)));
+    grid.innerHTML = parts.join('');
+    grid.querySelectorAll('[data-act="open"]').forEach(el=>{
+      el.onclick = ()=> openDetail(el.getAttribute('data-id'));
+    });
+    if(showNewForm){
+      const nameInput = document.getElementById('newName');
+      document.getElementById('newCancel').onclick = ()=>{ showNewForm=false; renderList(); };
+      document.getElementById('newSave').onclick = ()=>createProject();
+      if(nameInput) nameInput.focus();
+    }
+  }
+  function detailEditHtml(d){
+    return (
+      '<div class="detailpanel" style="border-left-color:var('+(STATUS[d.status]||STATUS.offen).css+')">'+
+        '<div class="detailback"><button class="ghost small" id="backBtn">&larr; Zur Übersicht</button></div>'+
+        '<div class="formrow"><input class="textin" id="edName" value="'+esc(d.name)+'" /></div>'+
+        '<div class="formrow" style="margin-top:10px"><label class="field-label">Stand (ein Punkt pro Zeile)</label><textarea id="edStand" style="min-height:120px">'+esc(d.stand)+'</textarea></div>'+
+        '<div class="formrow" style="margin-top:10px"><label class="field-label">Nächste Schritte (ein Punkt pro Zeile)</label><textarea id="edSchritte" style="min-height:120px">'+esc(d.schritte)+'</textarea></div>'+
+        '<div class="formactions" style="margin-top:14px">'+
+          '<button class="ghost small" id="edCancel">Abbrechen</button>'+
+          '<button class="primary small" id="edSave">Speichern</button>'+
+        '</div>'+
+      '</div>'
+    );
+  }
+  function detailViewHtml(d){
+    const st = STATUS[d.status] || STATUS.offen;
+    const statusControl = '<select class="statusselect" id="detStatus" style="border-color:var('+st.css+')">'+statusOptions(d.status)+'</select>';
+    const delRow = detailConfirmingDelete
+      ? '<button class="danger small" id="delConfirm">Wirklich löschen?</button><button class="ghost small" id="delCancel">Abbrechen</button>'
+      : '<button class="ghost small" id="btnEdit">✎ Bearbeiten</button><button class="ghost small" id="btnDelAsk">🗑 Löschen</button>';
+    return (
+      '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
+        '<div class="detailback"><button class="ghost small" id="backBtn">&larr; Zur Übersicht</button></div>'+
+        '<div class="detailhead">'+
+          '<h2>'+esc(d.name)+'</h2>'+
+          statusControl+
+        '</div>'+
+        '<div class="detailsection"><p class="field-label">Stand</p>'+bulletsHtml(d.stand, null, 'Noch kein Stand erfasst.')+'</div>'+
+        '<div class="detailsection"><p class="field-label">Nächste Schritte</p>'+bulletsHtml(d.schritte, null, 'Noch keine nächsten Schritte erfasst.')+'</div>'+
+        '<div class="detailfoot">'+
+          '<span class="ts">aktualisiert '+fmtTs(d.aktualisiert)+'</span>'+
+          '<span class="actions">'+delRow+'</span>'+
+        '</div>'+
+      '</div>'
+    );
+  }
+  function renderDetail(id){
+    const d = docs.find(x=>x.id===id);
+    if(!d){
+      if(loaded){ location.hash=''; }
+      return;
+    }
+    detailview.innerHTML = detailEditing ? detailEditHtml(d) : detailViewHtml(d);
+    document.getElementById('backBtn').onclick = closeDetail;
+    if(detailEditing){
+      document.getElementById('edCancel').onclick = ()=>{ detailEditing=false; renderDetail(id); };
+      document.getElementById('edSave').onclick = ()=>{
+        const name = (document.getElementById('edName').value||'').trim();
+        const stand = document.getElementById('edStand').value||'';
+        const schritte = document.getElementById('edSchritte').value||'';
+        if(!name) return;
+        updateDoc(id, {name, stand, schritte}).then(()=>{ detailEditing=false; });
+      };
+    } else {
+      const statusSel = document.getElementById('detStatus');
+      if(statusSel) statusSel.onchange = ()=> updateDoc(id, {status: statusSel.value});
+      if(detailConfirmingDelete){
+        document.getElementById('delConfirm').onclick = ()=> deleteDoc(id);
+        document.getElementById('delCancel').onclick = ()=>{ detailConfirmingDelete=false; renderDetail(id); };
+      } else {
+        const be = document.getElementById('btnEdit');
+        const bd = document.getElementById('btnDelAsk');
+        if(be) be.onclick = ()=>{ detailEditing=true; renderDetail(id); };
+        if(bd) bd.onclick = ()=>{ detailConfirmingDelete=true; renderDetail(id); };
+      }
+    }
+  }
+  function render(){
+    const id = currentId();
+    if(id){
+      listview.hidden = true;
+      detailview.hidden = false;
+      renderDetail(id);
+    } else {
+      detailview.hidden = true;
+      listview.hidden = false;
+      detailEditing = false;
+      detailConfirmingDelete = false;
+      renderList();
+    }
+  }
+  window.addEventListener('hashchange', render);
+
+  // ---------- data flow ----------
+  async function refreshData(silent){
+    const items = await pbList();
+    if(items===null){
+      if(!silent) offlineEl.hidden = false;
+      return;
+    }
+    offlineEl.hidden = true;
+    docs = items;
+    loaded = true;
+    render();
+  }
+  function startPolling(){
+    stopPolling();
+    pollHandle = setInterval(()=>refreshData(true), POLL_MS);
+  }
+  function stopPolling(){
+    if(pollHandle){ clearInterval(pollHandle); pollHandle=null; }
+  }
+
+  async function createProject(){
+    const name = (document.getElementById('newName').value||'').trim();
+    const stand = document.getElementById('newStand').value||'';
+    const schritte = document.getElementById('newSchritte').value||'';
+    if(!name) return;
+    const rec = await pbCreate({name, stand, schritte, status:'offen', erstellt: nowIso(), aktualisiert: nowIso(), quelle:'leitstand'});
+    if(rec){
+      showNewForm = false;
+      await refreshData(true);
+      openDetail(rec.id);
+    }
+  }
+  async function updateDoc(id, patch){
+    const rec = await pbUpdate(id, Object.assign({}, patch, {aktualisiert: nowIso()}));
+    if(rec) await refreshData(true);
+    render();
+  }
+  async function deleteDoc(id){
+    const ok = await pbDelete(id);
+    detailConfirmingDelete = false;
+    if(ok) await refreshData(true);
+    closeDetail();
+  }
+  btnNew.onclick = ()=>{ showNewForm = true; renderList(); };
+
+  // ---------- boot ----------
+  async function bootApp(){
+    showApp();
+    await refreshData(false);
+    startPolling();
+  }
+  async function init(){
+    const stored = loadAuth();
+    if(stored && stored.token){
+      authToken = stored.token;
+      const ok = await pbRefresh().catch(()=>false);
+      if(ok){ await bootApp(); return; }
+      authToken = null;
+      clearAuth();
+    }
+    showLogin();
+  }
+  init();
+})();
+</script>
+</body>
+</html>
