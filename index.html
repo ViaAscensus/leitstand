@@ -516,7 +516,7 @@ textarea{min-height:64px;line-height:1.5}
         const stand = document.getElementById('edStand').value||'';
         const schritte = document.getElementById('edSchritte').value||'';
         if(!name) return;
-        updateDoc(id, {name, stand, schritte}).then(()=>{ detailEditing=false; });
+        updateDoc(id, {name, stand, schritte}, true);
       };
     } else {
       const statusSel = document.getElementById('detStatus');
@@ -549,16 +549,22 @@ textarea{min-height:64px;line-height:1.5}
   window.addEventListener('hashchange', render);
 
   // ---------- data flow ----------
-  async function refreshData(silent){
+  async function refreshData(silent, forceRender){
     const items = await pbList();
     if(items===null){
       if(!silent) offlineEl.hidden = false;
-      return;
+      return false;
     }
     offlineEl.hidden = true;
     docs = items;
     loaded = true;
-    render();
+    // Waehrend ein Formular offen ist (Neuanlage oder Bearbeiten), darf
+    // eine Hintergrund-Aktualisierung (Polling) die Eingabe nicht
+    // wegreissen - sonst verschwindet gerade Diktiertes mitten im Tippen.
+    if(forceRender || !(showNewForm || detailEditing)){
+      render();
+    }
+    return true;
   }
   function startPolling(){
     stopPolling();
@@ -576,14 +582,18 @@ textarea{min-height:64px;line-height:1.5}
     const rec = await pbCreate({name, stand, schritte, status:'offen', erstellt: nowIso(), aktualisiert: nowIso(), quelle:'leitstand'});
     if(rec){
       showNewForm = false;
-      await refreshData(true);
+      await refreshData(true, true);
       openDetail(rec.id);
     }
   }
-  async function updateDoc(id, patch){
+  async function updateDoc(id, patch, exitEdit){
     const rec = await pbUpdate(id, Object.assign({}, patch, {aktualisiert: nowIso()}));
-    if(rec) await refreshData(true);
-    render();
+    if(rec){
+      if(exitEdit) detailEditing = false;
+      await refreshData(true, true);
+    } else {
+      render();
+    }
   }
   async function deleteDoc(id){
     const ok = await pbDelete(id);
