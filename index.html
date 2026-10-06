@@ -117,6 +117,17 @@ select.statusselect{
   border-radius:999px;padding:4px 10px;font-size:.74rem;cursor:pointer;
 }
 
+.claudetag{
+  display:inline-flex;align-items:center;gap:5px;border-radius:999px;
+  padding:3px 9px;font-size:.68rem;font-weight:500;background:var(--accent-dim);color:var(--accent);flex:none;
+}
+.claudebox{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  background:var(--accent-dim);border:1px solid var(--accent);border-radius:8px;
+  padding:10px 14px;margin-bottom:18px;font-size:.85rem;
+}
+.claudebox span{color:var(--fg)}
+
 .cardfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;border-top:1px solid var(--border);padding-top:10px}
 .ts{font-family:'IBM Plex Mono',monospace;color:var(--muted);font-size:.7rem;font-variant-numeric:tabular-nums}
 .actions{display:flex;gap:6px;flex:none}
@@ -440,7 +451,7 @@ textarea{min-height:64px;line-height:1.5}
       '<div class="card" style="border-left-color:var('+st.css+')" data-id="'+d.id+'">'+
         '<div class="cardtop">'+
           '<span class="pill"><span class="sw" style="background:var('+st.css+')"></span>'+esc(st.label)+'</span>'+
-          '<span class="ts">'+fmtTs(d.aktualisiert)+'</span>'+
+          (d.claude_auftrag ? '<span class="claudetag">&rarr; Claude</span>' : '<span class="ts">'+fmtTs(d.aktualisiert)+'</span>')+
         '</div>'+
         '<h3 data-act="open" data-id="'+d.id+'">'+esc(d.name)+'</h3>'+
         bulletsHtml(d.schritte, 3, 'Noch keine nächsten Schritte erfasst.')+
@@ -485,6 +496,9 @@ textarea{min-height:64px;line-height:1.5}
     const delRow = detailConfirmingDelete
       ? '<button class="danger small" id="delConfirm">Wirklich löschen?</button><button class="ghost small" id="delCancel">Abbrechen</button>'
       : '<button class="ghost small" id="btnEdit">✎ Bearbeiten</button><button class="ghost small" id="btnDelAsk">🗑 Löschen</button>';
+    const claudeRow = d.claude_auftrag
+      ? '<div class="claudebox"><span>&rarr; An Claude gesendet · '+fmtTs(d.claude_auftrag)+'</span><button class="ghost small" id="btnClaudeClear">Markierung entfernen</button></div>'
+      : '<div class="claudebox"><span>Noch nicht an Claude übergeben</span><button class="primary small" id="btnClaudeSend">&rarr; An Claude senden</button></div>';
     return (
       '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
         '<div class="detailback"><button class="ghost small" id="backBtn">&larr; Zur Übersicht</button></div>'+
@@ -492,6 +506,7 @@ textarea{min-height:64px;line-height:1.5}
           '<h2>'+esc(d.name)+'</h2>'+
           statusControl+
         '</div>'+
+        claudeRow+
         '<div class="detailsection"><p class="field-label">Stand</p>'+bulletsHtml(d.stand, null, 'Noch kein Stand erfasst.')+'</div>'+
         '<div class="detailsection"><p class="field-label">Nächste Schritte</p>'+bulletsHtml(d.schritte, null, 'Noch keine nächsten Schritte erfasst.')+'</div>'+
         '<div class="detailfoot">'+
@@ -521,6 +536,10 @@ textarea{min-height:64px;line-height:1.5}
     } else {
       const statusSel = document.getElementById('detStatus');
       if(statusSel) statusSel.onchange = ()=> updateDoc(id, {status: statusSel.value});
+      const bcs = document.getElementById('btnClaudeSend');
+      if(bcs) bcs.onclick = ()=> updateDoc(id, {claude_auftrag: nowIso()});
+      const bcc = document.getElementById('btnClaudeClear');
+      if(bcc) bcc.onclick = ()=> updateDoc(id, {claude_auftrag: null});
       if(detailConfirmingDelete){
         document.getElementById('delConfirm').onclick = ()=> deleteDoc(id);
         document.getElementById('delCancel').onclick = ()=>{ detailConfirmingDelete=false; renderDetail(id); };
