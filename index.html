@@ -80,7 +80,7 @@ a{color:var(--accent)}
 }
 .statbtn:hover{border-color:var(--accent)}
 .statbtn.active{outline:2px solid var(--accent);outline-offset:-1px}
-.stat.small{padding:6px 10px;min-width:0;flex:0 0 auto;margin-left:auto}
+.stat.small{padding:10px 10px;min-width:0;flex:0 0 auto;margin-left:auto}
 .stat.small .n{font-size:1rem}
 .stat.small .l{font-size:.64rem;margin-top:2px}
 
@@ -116,7 +116,7 @@ button[disabled]{opacity:.45;cursor:default}
 .card .field-label{color:var(--muted);font-size:.68rem;letter-spacing:.07em;text-transform:uppercase;margin:0 0 3px}
 
 .bullets{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
-.bullets li{display:flex;gap:8px;font-size:.88rem;line-height:1.5;word-wrap:break-word}
+.bullets li{display:flex;gap:8px;font-size:.88rem;line-height:1.5;min-width:0;overflow-wrap:anywhere}
 .bullets li::before{content:"•";color:var(--accent);flex:none}
 .card .bullets{font-size:.84rem;color:var(--muted)}
 .more{margin:0;color:var(--muted);font-size:.78rem;font-style:italic}
@@ -372,9 +372,11 @@ textarea{min-height:64px;line-height:1.5}
   let detailEditing = false;
   let detailConfirmingDelete = false;
   const editingStepIds = new Set();
-  // IDs der jeweils ersten Nachricht eines Chat-Segments, dessen Box bis
-  // zur Ausgangsfrage eingeklappt ist (manuell umgeschaltet).
-  const chatboxCollapsed = new Set();
+  // IDs (jeweils die letzte Nachricht eines Chat-Segments) von Boxen, die
+  // manuell aufgeklappt wurden - alle Boxen mit mehr als einer Nachricht
+  // starten beim Oeffnen eines Projekts eingeklappt, das hier ist die
+  // Ausnahmeliste.
+  const chatboxExpanded = new Set();
   let inputsFocused = 0; // zaehlt fokussierte/aktive Eingabefelder im Detail - waehrend >0 unterdrueckt Polling das Neuzeichnen
   let authToken = null;
   let pollHandle = null;
@@ -782,7 +784,11 @@ textarea{min-height:64px;line-height:1.5}
     // mehrere Zweige aus derselben Idee teilen koennen. Mit firstId als
     // Schluessel klappten frueher alle Zweige gemeinsam auf/zu.
     const lastId = messages[messages.length-1].id;
-    const collapsed = chatboxCollapsed.has(lastId) && messages.length>1;
+    // Jede Box mit mehr als einer Nachricht startet eingeklappt (nur die
+    // Ausgangsfrage sichtbar), bis sie manuell aufgeklappt wird - beim
+    // Öffnen eines Projekts soll man erst die Übersicht aller Ideen sehen,
+    // nicht jedes Gespräch gleich vollständig.
+    const collapsed = messages.length>1 && !chatboxExpanded.has(lastId);
     const shown = collapsed ? [messages[0]] : messages;
     const toggleHtml = messages.length>1
       ? '<button class="chatcollapse-toggle" data-act="chatcollapse" data-box="'+lastId+'">'+
@@ -792,7 +798,7 @@ textarea{min-height:64px;line-height:1.5}
     const composerHtml = collapsed ? '' :
       '<div class="composerrow"><input class="textin" id="composer-'+lastId+'" placeholder="Antworten…"><button class="primary small" data-act="composersend" data-parent="'+lastId+'">Senden</button></div>';
     return (
-      '<div class="chatbox">'+
+      '<div class="chatbox" data-box="'+lastId+'">'+
         '<div class="chatboxhead"><span class="chatboxnr">Schritt '+stepNumber+'</span>'+toggleHtml+'</div>'+
         '<div class="chatmessages">'+shown.map(bubbleHtml).join('')+'</div>'+
         composerHtml+
@@ -997,9 +1003,17 @@ textarea{min-height:64px;line-height:1.5}
     detailview.querySelectorAll('[data-act="chatcollapse"]').forEach(el=>{
       el.onclick = ()=>{
         const boxId = el.getAttribute('data-box');
-        if(chatboxCollapsed.has(boxId)) chatboxCollapsed.delete(boxId);
-        else chatboxCollapsed.add(boxId);
+        const wasExpanded = chatboxExpanded.has(boxId);
+        if(wasExpanded) chatboxExpanded.delete(boxId);
+        else chatboxExpanded.add(boxId);
         renderDetail(id);
+        if(!wasExpanded){
+          // Gerade aufgeklappt - ans Ende dieser Box springen, statt an
+          // der bisherigen Scrollposition (ganz oben im Gespräch) stehen
+          // zu bleiben.
+          const box = detailview.querySelector('.chatbox[data-box="'+boxId+'"]');
+          if(box) box.scrollIntoView({block:'end', behavior:'smooth'});
+        }
       };
     });
     detailview.querySelectorAll('[data-act="ideaup"]').forEach(el=>{
@@ -1029,7 +1043,7 @@ textarea{min-height:64px;line-height:1.5}
       detailEditing = false;
       detailConfirmingDelete = false;
       editingStepIds.clear();
-      chatboxCollapsed.clear();
+      chatboxExpanded.clear();
       inputsFocused = 0;
       renderList();
     }
