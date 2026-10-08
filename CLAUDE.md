@@ -34,12 +34,23 @@ allgemein ans Projekt.
 
 Felder: `projekt` (Relation auf `projekte`), `text`, `erledigt` (bool),
 `anhaenge` (Dateifeld, mehrere, eigene je Schritt), `erstellt`,
-`aktualisiert`.
+`aktualisiert`, `antwort_auf` (Selbst-Relation auf `projekt_schritte`,
+nullable, seit 08.10.2026 — siehe unten).
 
 Schritte zu einem Projekt lesen:
 ```
 GET /api/collections/projekt_schritte/records?filter=projekt="<projekt-id>"&sort=erstellt
 ```
+
+**`antwort_auf` — Antworten gehören in die Box ihrer Idee, nicht daneben:**
+Verweist ein Schritt per `antwort_auf` auf einen anderen, zeigt die
+Oberfläche ihn eingerückt innerhalb von dessen Box statt als eigene,
+gleichrangige Zeile. Wird ein Auftrag aus einem bestehenden Schritt heraus
+bearbeitet (z. B. der letzte Eintrag enthält eine Anweisung), gehört das
+Ergebnis als Antwort **auf genau diesen Schritt**, nicht als neuer
+Top-Level-Schritt daneben — sonst reißt es optisch wieder auseinander,
+was inhaltlich zusammengehört (das war explizit der Punkt, den Patrick
+nach der ersten Version bemängelt hat).
 
 **Konvention für Aufträge:** Ein Projekt mit gesetztem `claude_auftrag`
 ist bewusst an Claude übergeben worden — der Nutzer hat im Leitstand auf
@@ -62,12 +73,19 @@ danach filtern (`filter=name="..."`), unabhängig von `claude_auftrag`.
    angekommen ist).
 3. Ergebnis zurückschreiben: einen **neuen** `projekt_schritte`-Datensatz
    anlegen (nicht in einen bestehenden reinschreiben), verknüpft über
-   `projekt` mit der Projekt-ID:
+   `projekt` mit der Projekt-ID — und, falls die Arbeit eine Antwort auf
+   einen konkreten vorhandenen Schritt ist (der Normalfall), zusätzlich
+   über `antwort_auf` mit dessen ID, damit das Ergebnis in dessen Box
+   erscheint statt lose daneben:
    ```
    POST /api/collections/projekt_schritte/records
-   Body: {"projekt": "<projekt-id>", "text": "...", "erledigt": false,
+   Body: {"projekt": "<projekt-id>", "antwort_auf": "<id des Schritts, auf den geantwortet wird>",
+          "text": "...", "erledigt": false,
           "erstellt": "<jetzt, ISO 8601>", "aktualisiert": "<jetzt>"}
    ```
+   (`antwort_auf` weglassen, wenn es sich um einen wirklich neuen,
+   eigenständigen nächsten Schritt handelt statt um eine Antwort auf
+   einen bestehenden.)
    Bei Bedarf `status` des Projekts selbst aktualisieren (PATCH auf
    `projekte/records/<id>`). `claude_auftrag` bleibt stehen (der Nutzer
    löscht die Markierung im Leitstand selbst über "Markierung
