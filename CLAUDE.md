@@ -93,6 +93,24 @@ danach filtern (`filter=name="..."`), unabhängig von `claude_auftrag`.
 4. Niemals `aktualisiert` von Hand setzen auf einen Wert in der
    Vergangenheit — aktuelle Zeit beim Schreiben.
 
+### Darstellung bei vielen/tiefen Antworten (seit 08.10.2026)
+
+Je länger eine Antwortkette wird, desto eher wurde die Box unübersichtlich —
+die Spalte wurde mit jeder Ebene schmaler, und jede noch so kleine Antwort
+blieb für immer sichtbar. Zwei Gegenmaßnahmen in `index.html`:
+
+- **Einrücktiefe gedeckelt** (`MAX_INDENT_DEPTH = 3`): Ab der dritten
+  Verschachtelungsebene wird nicht weiter eingerückt (`.stepreplies.flat`)
+  — strukturell bleibt der Baum beliebig tief, nur optisch nicht.
+- **Automatisches Einklappen** (`stepRowHtml`, Parameter `depth`): Ein
+  Schritt mit Antworten ist standardmäßig eingeklappt, wenn er selbst
+  `erledigt` ist, oder wenn er `LONG_THREAD_THRESHOLD = 4` oder mehr
+  direkte Antworten hat. Jede Box ist per Klick auf den Toggle
+  (▸/▾ + Anzahl) einzeln auf- und zuklappbar, unabhängig vom Default
+  (`collapseOverride`-Set, pro Schritt-ID). Zustand wird beim Verlassen
+  der Detailansicht zurückgesetzt, bleibt aber über Polling-Refreshes
+  derselben Ansicht hinweg erhalten.
+
 API-Beispiel (api_clients-Token `$TOKEN`):
 ```
 curl -H "Authorization: $TOKEN" \

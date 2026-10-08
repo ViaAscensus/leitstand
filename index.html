@@ -206,9 +206,18 @@ textarea{min-height:64px;line-height:1.5}
 .stepreplyform{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
 .stepreplyform input{flex:1;min-width:140px;font-size:.84rem;padding:6px 8px}
 .stepreplies{
-  display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-left:14px;
+  display:flex;flex-direction:column;gap:6px;margin-top:6px;padding-left:14px;
   border-left:2px solid var(--border);
 }
+/* Ab MAX_INDENT_DEPTH wird nicht weiter eingerueckt - sonst wird die Spalte
+   bei tiefen Antwortketten immer schmaler. Baum bleibt strukturell gleich,
+   nur optisch flach ab dieser Ebene. */
+.stepreplies.flat{padding-left:0;border-left:none}
+.stepcollapse-toggle{
+  background:transparent;border:none;color:var(--muted);font-size:.78rem;
+  cursor:pointer;padding:2px 0;margin-top:4px;width:fit-content;text-align:left;
+}
+.stepcollapse-toggle:hover{color:var(--accent)}
 
 .loginwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 .loginbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:360px;width:100%}
@@ -291,6 +300,11 @@ textarea{min-height:64px;line-height:1.5}
     pausiert:           {label:'Pausiert',             css:'--s-pausiert'}
   };
   const STATUS_ORDER = ['offen','in_arbeit','wartet_auf_freigabe','erledigt','pausiert'];
+  // Ab dieser Verschachtelungstiefe wird optisch nicht weiter eingerueckt.
+  const MAX_INDENT_DEPTH = 3;
+  // Ab so vielen Antworten in einer Box ist sie standardmaessig eingeklappt,
+  // auch wenn der Schritt selbst nicht erledigt ist.
+  const LONG_THREAD_THRESHOLD = 4;
 
   const loginview = document.getElementById('loginview');
   const appview = document.getElementById('appview');
@@ -316,6 +330,9 @@ textarea{min-height:64px;line-height:1.5}
   let detailConfirmingDelete = false;
   const editingStepIds = new Set();
   const replyFormOpenFor = new Set();
+  // Schritt-IDs, deren Ein-/Ausklapp-Zustand vom Default abweicht (Default:
+  // erledigte oder sehr lange Antwortketten eingeklappt, alles andere offen).
+  const collapseOverride = new Set();
   let inputsFocused = 0; // zaehlt fokussierte/aktive Eingabefelder im Detail - waehrend >0 unterdrueckt Polling das Neuzeichnen
   let authToken = null;
   let pollHandle = null;
@@ -616,7 +633,8 @@ textarea{min-height:64px;line-height:1.5}
       '<button class="attachdel" data-act="stepattachdel" data-step="'+step.id+'" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></span>'
     )).join('')+'</div>';
   }
-  function stepRowHtml(step){
+  function stepRowHtml(step, depth){
+    depth = depth || 0;
     const isEditing = editingStepIds.has(step.id);
     const textPart = isEditing
       ? '<input class="textin" id="stepedit-'+step.id+'" value="'+esc(step.text)+'">'
@@ -625,9 +643,25 @@ textarea{min-height:64px;line-height:1.5}
       ? '<div class="stepreplyform"><input class="textin" id="replyinput-'+step.id+'" placeholder="Antwort…"><button class="ghost small" data-act="replysave" data-step="'+step.id+'">Speichern</button></div>'
       : '<button class="stepreplylink" data-act="replyopen" data-step="'+step.id+'">+ Antwort</button>';
     const children = Array.isArray(step.replies) ? step.replies : [];
-    const repliesHtml = children.length
-      ? '<div class="stepreplies">'+children.map(stepRowHtml).join('')+'</div>'
-      : '';
+    // Lange oder erledigte Antwortketten sind standardmaessig eingeklappt,
+    // damit eine einzelne Box die Ansicht nicht dominiert - per Klick auf
+    // jeder Ebene einzeln auf-/zuklappbar, unabhaengig vom Default.
+    let repliesBlockHtml = '';
+    if(children.length){
+      const count = children.length;
+      const label = count+' Antwort'+(count===1?'':'en');
+      const defaultCollapsed = step.erledigt || count>=LONG_THREAD_THRESHOLD;
+      const collapsed = collapseOverride.has(step.id) ? !defaultCollapsed : defaultCollapsed;
+      if(collapsed){
+        repliesBlockHtml = '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9656; '+label+' anzeigen</button>';
+      } else {
+        const childDepth = depth+1;
+        const wrapClass = childDepth>=MAX_INDENT_DEPTH ? 'stepreplies flat' : 'stepreplies';
+        repliesBlockHtml =
+          '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9662; '+label+' einklappen</button>'+
+          '<div class="'+wrapClass+'">'+children.map(c=>stepRowHtml(c, childDepth)).join('')+'</div>';
+      }
+    }
     return (
       '<div class="steprow'+(step.erledigt?' done':'')+'" data-step="'+step.id+'">'+
         '<label class="stepcheck"><input type="checkbox" data-act="stepdone" data-step="'+step.id+'"'+(step.erledigt?' checked':'')+'></label>'+
@@ -636,7 +670,7 @@ textarea{min-height:64px;line-height:1.5}
           stepAttachesHtml(step)+
           '<label class="stepfilelabel">+ Anhang<input type="file" hidden data-act="stepfile" data-step="'+step.id+'"></label>'+
           replyFormHtml+
-          repliesHtml+
+          repliesBlockHtml+
         '</div>'+
         '<button class="stepdel" data-act="stepdel" data-step="'+step.id+'" title="Schritt löschen">&times;</button>'+
       '</div>'
@@ -660,7 +694,7 @@ textarea{min-height:64px;line-height:1.5}
       : '<p class="empty-hint">Noch keine Anhänge.</p>';
     const stepTree = buildStepTree(stepsFor(d.id));
     const stepsHtml = stepTree.length
-      ? '<div class="steplist">'+stepTree.map(stepRowHtml).join('')+'</div>'
+      ? '<div class="steplist">'+stepTree.map(s=>stepRowHtml(s, 0)).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Schritte erfasst.</p>';
     return (
       '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
@@ -843,6 +877,14 @@ textarea{min-height:64px;line-height:1.5}
         else renderDetail(id);
       };
     });
+    detailview.querySelectorAll('[data-act="stepcollapse"]').forEach(el=>{
+      el.onclick = ()=>{
+        const sid = el.getAttribute('data-step');
+        if(collapseOverride.has(sid)) collapseOverride.delete(sid);
+        else collapseOverride.add(sid);
+        renderDetail(id);
+      };
+    });
   }
   function render(){
     const id = currentId();
@@ -857,6 +899,7 @@ textarea{min-height:64px;line-height:1.5}
       detailConfirmingDelete = false;
       editingStepIds.clear();
       replyFormOpenFor.clear();
+      collapseOverride.clear();
       inputsFocused = 0;
       renderList();
     }
