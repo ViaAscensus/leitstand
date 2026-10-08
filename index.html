@@ -201,6 +201,14 @@ textarea{min-height:64px;line-height:1.5}
 .stepdel:hover{text-decoration:underline}
 .newsteprow{display:flex;gap:8px;flex-wrap:wrap}
 .newsteprow input{flex:1;min-width:160px}
+.stepreplylink{background:transparent;border:none;color:var(--accent);font-size:.76rem;cursor:pointer;padding:2px 0;width:fit-content}
+.stepreplylink:hover{text-decoration:underline}
+.stepreplyform{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.stepreplyform input{flex:1;min-width:140px;font-size:.84rem;padding:6px 8px}
+.stepreplies{
+  display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-left:14px;
+  border-left:2px solid var(--border);
+}
 
 .loginwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 .loginbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:360px;width:100%}
@@ -307,6 +315,7 @@ textarea{min-height:64px;line-height:1.5}
   let detailEditing = false;
   let detailConfirmingDelete = false;
   const editingStepIds = new Set();
+  const replyFormOpenFor = new Set();
   let inputsFocused = 0; // zaehlt fokussierte/aktive Eingabefelder im Detail - waehrend >0 unterdrueckt Polling das Neuzeichnen
   let authToken = null;
   let pollHandle = null;
@@ -351,6 +360,24 @@ textarea{min-height:64px;line-height:1.5}
   }
   function stepsFor(projectId){
     return stepsByProject[projectId] || [];
+  }
+  // Baut aus der flachen Schritte-Liste einen Baum: jeder Schritt bekommt
+  // ein .replies-Array mit den Schritten, deren antwort_auf auf ihn zeigt.
+  // Unterstuetzt beliebige Tiefe, auch wenn die Oberflaeche aktuell nur
+  // eine Ebene gezielt gestaltet.
+  function buildStepTree(steps){
+    const byId = {};
+    steps.forEach(s=>{ byId[s.id] = Object.assign({}, s, {replies: []}); });
+    const top = [];
+    steps.forEach(s=>{
+      const node = byId[s.id];
+      if(s.antwort_auf && byId[s.antwort_auf]){
+        byId[s.antwort_auf].replies.push(node);
+      } else {
+        top.push(node);
+      }
+    });
+    return top;
   }
 
   // ---------- auth storage ----------
@@ -521,8 +548,12 @@ textarea{min-height:64px;line-height:1.5}
     );
   }
   function stepsTeaserHtml(steps, limit){
-    if(!steps.length) return '<p class="empty-hint">Noch keine nächsten Schritte erfasst.</p>';
-    const pending = steps.filter(s=>!s.erledigt);
+    // Nur Top-Level-Ideen in der Kurzansicht - Antworten/Unterpunkte
+    // gehoeren inhaltlich zu ihrer Idee und wuerden die Kachel sonst mit
+    // Dingen fuellen, die gar keine eigenen offenen Punkte sind.
+    const topLevel = steps.filter(s=>!s.antwort_auf);
+    if(!topLevel.length) return '<p class="empty-hint">Noch keine nächsten Schritte erfasst.</p>';
+    const pending = topLevel.filter(s=>!s.erledigt);
     if(!pending.length) return '<p class="empty-hint">Alle Schritte erledigt.</p>';
     const shown = pending.slice(0, limit);
     let html = '<ul class="bullets">'+shown.map(s=>'<li>'+esc(s.text)+'</li>').join('')+'</ul>';
@@ -590,6 +621,13 @@ textarea{min-height:64px;line-height:1.5}
     const textPart = isEditing
       ? '<input class="textin" id="stepedit-'+step.id+'" value="'+esc(step.text)+'">'
       : '<span class="steptext'+(step.erledigt?' done':'')+'" data-act="stepedit" data-step="'+step.id+'">'+esc(step.text)+'</span>';
+    const replyFormHtml = replyFormOpenFor.has(step.id)
+      ? '<div class="stepreplyform"><input class="textin" id="replyinput-'+step.id+'" placeholder="Antwort…"><button class="ghost small" data-act="replysave" data-step="'+step.id+'">Speichern</button></div>'
+      : '<button class="stepreplylink" data-act="replyopen" data-step="'+step.id+'">+ Antwort</button>';
+    const children = Array.isArray(step.replies) ? step.replies : [];
+    const repliesHtml = children.length
+      ? '<div class="stepreplies">'+children.map(stepRowHtml).join('')+'</div>'
+      : '';
     return (
       '<div class="steprow'+(step.erledigt?' done':'')+'" data-step="'+step.id+'">'+
         '<label class="stepcheck"><input type="checkbox" data-act="stepdone" data-step="'+step.id+'"'+(step.erledigt?' checked':'')+'></label>'+
@@ -597,6 +635,8 @@ textarea{min-height:64px;line-height:1.5}
           textPart+
           stepAttachesHtml(step)+
           '<label class="stepfilelabel">+ Anhang<input type="file" hidden data-act="stepfile" data-step="'+step.id+'"></label>'+
+          replyFormHtml+
+          repliesHtml+
         '</div>'+
         '<button class="stepdel" data-act="stepdel" data-step="'+step.id+'" title="Schritt löschen">&times;</button>'+
       '</div>'
@@ -618,9 +658,9 @@ textarea{min-height:64px;line-height:1.5}
           '<button class="attachdel" data-act="attachdel" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></div>'
         )).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Anhänge.</p>';
-    const steps = stepsFor(d.id);
-    const stepsHtml = steps.length
-      ? '<div class="steplist">'+steps.map(stepRowHtml).join('')+'</div>'
+    const stepTree = buildStepTree(stepsFor(d.id));
+    const stepsHtml = stepTree.length
+      ? '<div class="steplist">'+stepTree.map(stepRowHtml).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Schritte erfasst.</p>';
     return (
       '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
@@ -771,6 +811,38 @@ textarea{min-height:64px;line-height:1.5}
         if(ok) await refreshData(true, true);
       };
     });
+    detailview.querySelectorAll('[data-act="replyopen"]').forEach(el=>{
+      el.onclick = ()=>{
+        replyFormOpenFor.add(el.getAttribute('data-step'));
+        renderDetail(id);
+      };
+    });
+    detailview.querySelectorAll('input[id^="replyinput-"]').forEach(el=>{
+      const parentId = el.id.replace('replyinput-','');
+      el.addEventListener('focus', ()=>inputsFocused++);
+      el.addEventListener('blur', ()=>inputsFocused--);
+      const save = ()=>{
+        const text = (el.value||'').trim();
+        replyFormOpenFor.delete(parentId);
+        if(text) createStep(id, text, parentId);
+        else renderDetail(id);
+      };
+      el.addEventListener('keydown', (e)=>{
+        if(e.key==='Enter'){ e.preventDefault(); save(); }
+        if(e.key==='Escape'){ replyFormOpenFor.delete(parentId); renderDetail(id); }
+      });
+      el.focus();
+    });
+    detailview.querySelectorAll('[data-act="replysave"]').forEach(el=>{
+      el.onclick = ()=>{
+        const parentId = el.getAttribute('data-step');
+        const input = document.getElementById('replyinput-'+parentId);
+        const text = (input.value||'').trim();
+        replyFormOpenFor.delete(parentId);
+        if(text) createStep(id, text, parentId);
+        else renderDetail(id);
+      };
+    });
   }
   function render(){
     const id = currentId();
@@ -784,6 +856,7 @@ textarea{min-height:64px;line-height:1.5}
       detailEditing = false;
       detailConfirmingDelete = false;
       editingStepIds.clear();
+      replyFormOpenFor.clear();
       inputsFocused = 0;
       renderList();
     }
@@ -852,11 +925,13 @@ textarea{min-height:64px;line-height:1.5}
     if(ok) await refreshData(true);
     closeDetail();
   }
-  async function createStep(projectId, text){
-    const rec = await pbCreate(STEPS_COLLECTION, {
+  async function createStep(projectId, text, parentStepId){
+    const fields = {
       projekt: projectId, text, erledigt: false,
       erstellt: nowIso(), aktualisiert: nowIso()
-    });
+    };
+    if(parentStepId) fields.antwort_auf = parentStepId;
+    const rec = await pbCreate(STEPS_COLLECTION, fields);
     if(rec) await refreshData(true, true);
   }
   async function updateStep(stepId, patch){
