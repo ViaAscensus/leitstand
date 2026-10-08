@@ -6,10 +6,18 @@ Abhängigkeiten, kein Build-Schritt.
 
 ## Architektur
 
-- **Datenhaltung**: PocketBase (`pb.ascensus.fit`), Collection `projekte`
-  (`name`, `status`, `stand`, `schritte`, `quelle`, `erstellt`, `aktualisiert`).
-  API-Regeln sind 1:1 von der Collection `rezepte` im `ascensus-homepage`-Repo
-  übernommen (`@request.auth.collectionName = "api_clients"`).
+- **Datenhaltung**: PocketBase (`pb.ascensus.fit`), zwei Collections:
+  - `projekte` (`name`, `status`, `stand`, `quelle`, `erstellt`,
+    `aktualisiert`, `claude_auftrag`, `anhaenge`)
+  - `projekt_schritte` (`projekt`-Relation, `text`, `erledigt`, eigene
+    `anhaenge`, `erstellt`, `aktualisiert`) — jeder nächste Schritt ein
+    eigener Datensatz statt eines Punkts in einem gemeinsamen Textfeld,
+    damit er einzeln abgehakt, bearbeitet und mit eigenem Anhang versehen
+    werden kann.
+
+  API-Regeln beider Collections sind 1:1 von `rezepte` im
+  `ascensus-homepage`-Repo übernommen (`@request.auth.collectionName =
+  "api_clients"`).
 - **Frontend**: `index.html` spricht PocketBase direkt per `fetch()` an —
   keine Sandbox, kein Mittelsmann. Meldet sich beim ersten Öffnen einmal mit
   den PocketBase-Zugangsdaten (Auth-Collection `api_clients`) an; der
@@ -18,9 +26,12 @@ Abhängigkeiten, kein Build-Schritt.
 - **Aktualisierung**: beim Öffnen neu geladen, danach alle 25 Sekunden
   automatisch neu abgefragt (Polling) — andere Tools, die direkt in
   `projekte` schreiben, erscheinen hier ohne eigenes Zutun.
-- **Stand/Nächste Schritte**: je ein Punkt pro Zeile, werden als Aufzählung
-  dargestellt — in der Übersicht gekürzt (nächste Schritte, max. 3 Punkte),
-  in der Detailansicht eines Projekts vollständig.
+- **Stand**: ein Punkt pro Zeile in einem Textfeld, als Aufzählung
+  dargestellt.
+- **Nächste Schritte**: einzelne Datensätze in `projekt_schritte` statt
+  Zeilen in einem Textfeld — in der Übersicht gekürzt auf die noch offenen
+  (max. 3), in der Detailansicht vollständig mit Abhak-Checkbox, Inline-
+  Bearbeitung, Löschen und eigenem Datei-Anhang je Schritt.
 
 ## Deployment
 
