@@ -27,6 +27,9 @@
   --s-wartet:#f2b84b;
   --s-erledigt:#43c98a;
   --s-pausiert:#c4713f;
+  --sand:#d8b878;
+  --sand-dim:rgba(216,184,120,.10);
+  --sand-border:rgba(216,184,120,.32);
   color-scheme: dark;
 }
 *{box-sizing:border-box}
@@ -184,9 +187,15 @@ textarea{min-height:64px;line-height:1.5}
   ketten) an der Wurzel, weil hier gar nicht mehr eingerueckt wird.
 */
 .chatbox{
-  background:var(--panel-2);border:1px solid var(--border);border-radius:10px;
+  background:var(--sand-dim);border:1px solid var(--sand-border);border-radius:10px;
   padding:12px;display:flex;flex-direction:column;gap:10px;
 }
+.chatboxhead{display:flex;justify-content:flex-end}
+.chatcollapse-toggle{
+  background:transparent;border:none;color:var(--sand);font-size:.76rem;
+  cursor:pointer;padding:2px 0;width:fit-content;
+}
+.chatcollapse-toggle:hover{text-decoration:underline}
 .chatmessages{display:flex;flex-direction:column;gap:8px}
 .bubblerow{display:flex;flex-direction:column;max-width:82%}
 .bubblerow.left{align-self:flex-start;align-items:flex-start}
@@ -330,6 +339,9 @@ textarea{min-height:64px;line-height:1.5}
   let detailEditing = false;
   let detailConfirmingDelete = false;
   const editingStepIds = new Set();
+  // IDs der jeweils ersten Nachricht eines Chat-Segments, dessen Box bis
+  // zur Ausgangsfrage eingeklappt ist (manuell umgeschaltet).
+  const chatboxCollapsed = new Set();
   let inputsFocused = 0; // zaehlt fokussierte/aktive Eingabefelder im Detail - waehrend >0 unterdrueckt Polling das Neuzeichnen
   let authToken = null;
   let pollHandle = null;
@@ -689,11 +701,22 @@ textarea{min-height:64px;line-height:1.5}
     );
   }
   function chatSegmentHtml(messages){
+    const firstId = messages[0].id;
     const lastId = messages[messages.length-1].id;
+    const collapsed = chatboxCollapsed.has(firstId) && messages.length>1;
+    const shown = collapsed ? [messages[0]] : messages;
+    const headHtml = messages.length>1
+      ? '<div class="chatboxhead"><button class="chatcollapse-toggle" data-act="chatcollapse" data-box="'+firstId+'">'+
+          (collapsed ? '&#9656; '+(messages.length-1)+' weitere Nachricht'+(messages.length-1===1?'':'en')+' anzeigen' : '&#9662; Bis zur Ausgangsfrage einklappen')+
+        '</button></div>'
+      : '';
+    const composerHtml = collapsed ? '' :
+      '<div class="composerrow"><input class="textin" id="composer-'+lastId+'" placeholder="Antworten…"><button class="primary small" data-act="composersend" data-parent="'+lastId+'">Senden</button></div>';
     return (
       '<div class="chatbox">'+
-        '<div class="chatmessages">'+messages.map(bubbleHtml).join('')+'</div>'+
-        '<div class="composerrow"><input class="textin" id="composer-'+lastId+'" placeholder="Antworten…"><button class="primary small" data-act="composersend" data-parent="'+lastId+'">Senden</button></div>'+
+        headHtml+
+        '<div class="chatmessages">'+shown.map(bubbleHtml).join('')+'</div>'+
+        composerHtml+
       '</div>'
     );
   }
@@ -880,6 +903,14 @@ textarea{min-height:64px;line-height:1.5}
       const btn = detailview.querySelector('[data-act="composersend"][data-parent="'+parentId+'"]');
       if(btn) btn.onclick = send;
     });
+    detailview.querySelectorAll('[data-act="chatcollapse"]').forEach(el=>{
+      el.onclick = ()=>{
+        const boxId = el.getAttribute('data-box');
+        if(chatboxCollapsed.has(boxId)) chatboxCollapsed.delete(boxId);
+        else chatboxCollapsed.add(boxId);
+        renderDetail(id);
+      };
+    });
   }
   function render(){
     const id = currentId();
@@ -893,6 +924,7 @@ textarea{min-height:64px;line-height:1.5}
       detailEditing = false;
       detailConfirmingDelete = false;
       editingStepIds.clear();
+      chatboxCollapsed.clear();
       inputsFocused = 0;
       renderList();
     }
