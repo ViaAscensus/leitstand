@@ -643,14 +643,19 @@ textarea{min-height:64px;line-height:1.5}
       ? '<div class="stepreplyform"><input class="textin" id="replyinput-'+step.id+'" placeholder="Antwort…"><button class="ghost small" data-act="replysave" data-step="'+step.id+'">Speichern</button></div>'
       : '<button class="stepreplylink" data-act="replyopen" data-step="'+step.id+'">+ Antwort</button>';
     const children = Array.isArray(step.replies) ? step.replies : [];
-    // Lange oder erledigte Antwortketten sind standardmaessig eingeklappt,
-    // damit eine einzelne Box die Ansicht nicht dominiert - per Klick auf
-    // jeder Ebene einzeln auf-/zuklappbar, unabhaengig vom Default.
+    // Lange, tiefe oder erledigte Antwortketten sind standardmaessig
+    // eingeklappt, damit eine einzelne Box die Ansicht nicht dominiert -
+    // per Klick auf jeder Ebene einzeln auf-/zuklappbar, unabhaengig vom
+    // Default. Die Tiefenpruefung (nicht nur die Geschwisterzahl) ist
+    // noetig, weil eine lange 1-zu-1-Kette (jede Antwort genau eine
+    // Antwort) nie 4 Geschwister auf einer Ebene hat und sonst nie
+    // automatisch einklappen wuerde, obwohl sie genauso in die Breite
+    // laeuft wie viele Geschwister.
     let repliesBlockHtml = '';
     if(children.length){
       const count = children.length;
       const label = count+' Antwort'+(count===1?'':'en');
-      const defaultCollapsed = step.erledigt || count>=LONG_THREAD_THRESHOLD;
+      const defaultCollapsed = step.erledigt || count>=LONG_THREAD_THRESHOLD || (depth+1)>=MAX_INDENT_DEPTH;
       const collapsed = collapseOverride.has(step.id) ? !defaultCollapsed : defaultCollapsed;
       if(collapsed){
         repliesBlockHtml = '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9656; '+label+' anzeigen</button>';
