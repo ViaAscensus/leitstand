@@ -158,6 +158,20 @@ textarea{min-height:64px;line-height:1.5}
 .detailsection .bullets li{font-size:.95rem;line-height:1.6}
 .detailfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:22px;border-top:1px solid var(--border);padding-top:14px;flex-wrap:wrap}
 
+.attachlist{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.attachlist:empty{margin-bottom:0}
+.attachrow{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;
+}
+.attachrow a{font-size:.85rem;word-break:break-all;min-width:0}
+.attachrow .attachdel{flex:none;color:var(--s-pausiert);background:transparent;border:none;cursor:pointer;font-size:.9rem;padding:2px 4px}
+.attachrow .attachdel:hover{text-decoration:underline}
+.uploadrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.uploadrow input[type=file]{font-size:.8rem;color:var(--muted);max-width:100%}
+.uploadmsg{font-size:.78rem;color:var(--muted);margin:6px 0 0}
+.uploadmsg.err{color:var(--s-pausiert)}
+
 .loginwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 .loginbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:360px;width:100%}
 .loginbox h1{font-size:1.1rem;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px}
@@ -367,6 +381,31 @@ textarea{min-height:64px;line-height:1.5}
     if(r.status===401){ onAuthLost(); return false; }
     return r.status===204 || r.status===200;
   }
+  function attachmentUrl(recordId, filename){
+    return PB_URL+'/api/files/'+DATA_COLLECTION+'/'+recordId+'/'+encodeURIComponent(filename);
+  }
+  // Datei-Upload braucht multipart/form-data statt JSON, deshalb kein
+  // pbRaw() hier (das setzt immer Content-Type: application/json) - der
+  // Browser muss die Boundary fuer FormData selbst setzen koennen.
+  async function pbUploadAttachment(id, file){
+    const fd = new FormData();
+    fd.append('anhaenge', file);
+    const headers = {};
+    if(authToken) headers['Authorization'] = authToken;
+    const res = await fetch(PB_URL+'/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'PATCH', headers, body:fd});
+    if(res.status===401){ onAuthLost(); return null; }
+    if(res.status!==200 && res.status!==201) return null;
+    try{ return await res.json(); }catch(e){ return null; }
+  }
+  async function pbDeleteAttachment(id, filename){
+    const fd = new FormData();
+    fd.append('anhaenge-', filename); // PocketBase-Syntax: "<feld>-" entfernt diese eine Datei aus dem Mehrfach-Dateifeld
+    const headers = {};
+    if(authToken) headers['Authorization'] = authToken;
+    const res = await fetch(PB_URL+'/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'PATCH', headers, body:fd});
+    if(res.status===401){ onAuthLost(); return false; }
+    return res.status===200 || res.status===201;
+  }
   function onAuthLost(){
     authToken = null;
     clearAuth();
@@ -499,6 +538,13 @@ textarea{min-height:64px;line-height:1.5}
     const claudeRow = d.claude_auftrag
       ? '<div class="claudebox"><span>&rarr; An Claude gesendet · '+fmtTs(d.claude_auftrag)+'</span><button class="ghost small" id="btnClaudeClear">Markierung entfernen</button></div>'
       : '<div class="claudebox"><span>Noch nicht an Claude übergeben</span><button class="primary small" id="btnClaudeSend">&rarr; An Claude senden</button></div>';
+    const files = Array.isArray(d.anhaenge) ? d.anhaenge : [];
+    const attachList = files.length
+      ? '<div class="attachlist">'+files.map(fn=>(
+          '<div class="attachrow"><a href="'+attachmentUrl(d.id, fn)+'" target="_blank" rel="noopener">'+esc(fn)+'</a>'+
+          '<button class="attachdel" data-act="attachdel" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></div>'
+        )).join('')+'</div>'
+      : '<p class="empty-hint">Noch keine Anhänge.</p>';
     return (
       '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
         '<div class="detailback"><button class="ghost small" id="backBtn">&larr; Zur Übersicht</button></div>'+
@@ -509,6 +555,12 @@ textarea{min-height:64px;line-height:1.5}
         claudeRow+
         '<div class="detailsection"><p class="field-label">Stand</p>'+bulletsHtml(d.stand, null, 'Noch kein Stand erfasst.')+'</div>'+
         '<div class="detailsection"><p class="field-label">Nächste Schritte</p>'+bulletsHtml(d.schritte, null, 'Noch keine nächsten Schritte erfasst.')+'</div>'+
+        '<div class="detailsection">'+
+          '<p class="field-label">Anhänge</p>'+
+          attachList+
+          '<div class="uploadrow"><input type="file" id="attachInput"><button class="ghost small" id="attachUpload">Hochladen</button></div>'+
+          '<p class="uploadmsg" id="attachMsg"></p>'+
+        '</div>'+
         '<div class="detailfoot">'+
           '<span class="ts">aktualisiert '+fmtTs(d.aktualisiert)+'</span>'+
           '<span class="actions">'+delRow+'</span>'+
@@ -540,6 +592,31 @@ textarea{min-height:64px;line-height:1.5}
       if(bcs) bcs.onclick = ()=> updateDoc(id, {claude_auftrag: nowIso()});
       const bcc = document.getElementById('btnClaudeClear');
       if(bcc) bcc.onclick = ()=> updateDoc(id, {claude_auftrag: null});
+      const attachInput = document.getElementById('attachInput');
+      const attachUpload = document.getElementById('attachUpload');
+      const attachMsg = document.getElementById('attachMsg');
+      if(attachUpload) attachUpload.onclick = async ()=>{
+        const file = attachInput && attachInput.files && attachInput.files[0];
+        if(!file) return;
+        attachUpload.disabled = true;
+        attachMsg.className = 'uploadmsg';
+        attachMsg.textContent = 'Lädt hoch …';
+        const rec = await pbUploadAttachment(id, file);
+        attachUpload.disabled = false;
+        if(rec){
+          await refreshData(true, true);
+        } else {
+          attachMsg.className = 'uploadmsg err';
+          attachMsg.textContent = 'Upload fehlgeschlagen — bitte erneut versuchen.';
+        }
+      };
+      detailview.querySelectorAll('[data-act="attachdel"]').forEach(el=>{
+        el.onclick = async ()=>{
+          const fn = el.getAttribute('data-file');
+          const ok = await pbDeleteAttachment(id, fn);
+          if(ok) await refreshData(true, true);
+        };
+      });
       if(detailConfirmingDelete){
         document.getElementById('delConfirm').onclick = ()=> deleteDoc(id);
         document.getElementById('delCancel').onclick = ()=>{ detailConfirmingDelete=false; renderDetail(id); };
