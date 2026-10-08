@@ -10,10 +10,13 @@ Abhängigkeiten, kein Build-Schritt.
   - `projekte` (`name`, `status`, `stand`, `quelle`, `erstellt`,
     `aktualisiert`, `claude_auftrag`, `anhaenge`)
   - `projekt_schritte` (`projekt`-Relation, `text`, `erledigt`, eigene
-    `anhaenge`, `erstellt`, `aktualisiert`) — jeder nächste Schritt ein
-    eigener Datensatz statt eines Punkts in einem gemeinsamen Textfeld,
-    damit er einzeln abgehakt, bearbeitet und mit eigenem Anhang versehen
-    werden kann.
+    `anhaenge`, `erstellt`, `aktualisiert`, `antwort_auf`-Selbstrelation,
+    `autor` select `patrick`/`claude`) — jeder nächste Schritt ein eigener
+    Datensatz statt eines Punkts in einem gemeinsamen Textfeld, damit er
+    einzeln abgehakt, bearbeitet und mit eigenem Anhang versehen werden
+    kann. `autor` ist nötig, weil Web-UI, MCP-Connector und Skill alle
+    über denselben `api_clients`-Account schreiben und PocketBase sie
+    sonst nicht unterscheiden könnte.
 
   API-Regeln beider Collections sind 1:1 von `rezepte` im
   `ascensus-homepage`-Repo übernommen (`@request.auth.collectionName =
@@ -30,8 +33,13 @@ Abhängigkeiten, kein Build-Schritt.
   dargestellt.
 - **Nächste Schritte**: einzelne Datensätze in `projekt_schritte` statt
   Zeilen in einem Textfeld — in der Übersicht gekürzt auf die noch offenen
-  (max. 3), in der Detailansicht vollständig mit Abhak-Checkbox, Inline-
-  Bearbeitung, Löschen und eigenem Datei-Anhang je Schritt.
+  (max. 3), in der Detailansicht als Chat-Verlauf pro Gesprächsfaden
+  (Patrick links, Claude rechts, `buildChatSegments()`), mit Abhak-
+  Checkbox, Inline-Bearbeitung, Löschen und eigenem Datei-Anhang je
+  Nachricht. Spaltet sich eine Idee in mehrere Antworten auf (z. B.
+  mehrere Varianten eines Vorschlags), wird daraus je ein eigener,
+  unabhängiger Chat-Block statt einer gemeinsamen, themenspringenden
+  Zeitleiste.
 
 ## Deployment
 

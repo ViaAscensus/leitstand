@@ -173,12 +173,33 @@ textarea{min-height:64px;line-height:1.5}
 .uploadmsg{font-size:.78rem;color:var(--muted);margin:6px 0 0}
 .uploadmsg.err{color:var(--s-pausiert)}
 
-.steplist{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
-.steprow{
-  display:flex;align-items:flex-start;gap:10px;background:var(--panel-2);
-  border:1px solid var(--border);border-radius:8px;padding:9px 10px;
+.steplist{display:flex;flex-direction:column;gap:14px;margin-bottom:12px}
+/*
+  Jede Idee, die sich in mehrere Antwortzweige aufspaltet, wird zu mehreren
+  .chatbox-Bloecken (einer je Zweig) statt einem gemeinsamen Baum - siehe
+  buildChatSegments(). Innerhalb eines Blocks ist die Konversation immer
+  linear (keine Verschachtelung mehr noetig), deshalb reicht links/rechts
+  wie in einem Messenger: Patrick links, Claude rechts. Das loest das
+  Problem frueherer Versionen (immer schmalere Spalte bei tiefen Antwort-
+  ketten) an der Wurzel, weil hier gar nicht mehr eingerueckt wird.
+*/
+.chatbox{
+  background:var(--panel-2);border:1px solid var(--border);border-radius:10px;
+  padding:12px;display:flex;flex-direction:column;gap:10px;
 }
-.steprow.done{opacity:.6}
+.chatmessages{display:flex;flex-direction:column;gap:8px}
+.bubblerow{display:flex;flex-direction:column;max-width:82%}
+.bubblerow.left{align-self:flex-start;align-items:flex-start}
+.bubblerow.right{align-self:flex-end;align-items:flex-end}
+.bubble{
+  display:flex;align-items:flex-start;gap:8px;border-radius:12px;padding:8px 10px;
+  min-width:0;
+}
+.bubble.patrick{background:var(--panel);border:1px solid var(--border);border-bottom-left-radius:3px}
+.bubble.claude{background:var(--accent-dim);border:1px solid var(--accent);border-bottom-right-radius:3px}
+.bubble.done{opacity:.6}
+.bubblelabel{font-size:.68rem;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin:0 4px 2px}
+.bubblets{font-size:.68rem;color:var(--muted);margin:2px 4px 0}
 .stepcheck{flex:none;padding-top:2px}
 .stepcheck input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
 .stepmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
@@ -201,27 +222,8 @@ textarea{min-height:64px;line-height:1.5}
 .stepdel:hover{text-decoration:underline}
 .newsteprow{display:flex;gap:8px;flex-wrap:wrap}
 .newsteprow input{flex:1;min-width:160px}
-.stepreplylink{background:transparent;border:none;color:var(--accent);font-size:.76rem;cursor:pointer;padding:2px 0;width:fit-content}
-.stepreplylink:hover{text-decoration:underline}
-.stepreplyform{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
-.stepreplyform input{flex:1;min-width:140px;font-size:.84rem;padding:6px 8px}
-.stepreplies{
-  display:flex;flex-direction:column;gap:6px;margin-top:6px;padding-left:14px;
-  border-left:2px solid var(--border);
-}
-/* Ab MAX_INDENT_DEPTH wird nicht weiter eingerueckt - sonst wird die Spalte
-   bei tiefen Antwortketten immer schmaler. Baum bleibt strukturell gleich,
-   nur optisch flach ab dieser Ebene. */
-.stepreplies.flat{padding-left:0;border-left:none}
-.stepcollapse-toggle{
-  background:transparent;border:none;color:var(--muted);font-size:.78rem;
-  cursor:pointer;padding:2px 0;margin-top:4px;width:fit-content;text-align:left;
-}
-.stepcollapse-toggle:hover{color:var(--accent)}
-/* Hinweis "antwortet auf", wenn eine Antwort jenseits der Deckeltiefe
-   flach statt eingerueckt dargestellt wird - ersetzt die fehlende
-   visuelle Verschachtelung als Orientierung. */
-.stepctx{color:var(--muted);font-size:.72rem;margin-bottom:3px}
+.composerrow{display:flex;gap:8px;flex-wrap:wrap}
+.composerrow input{flex:1;min-width:160px;font-size:.86rem}
 
 .loginwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 .loginbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:360px;width:100%}
@@ -304,11 +306,6 @@ textarea{min-height:64px;line-height:1.5}
     pausiert:           {label:'Pausiert',             css:'--s-pausiert'}
   };
   const STATUS_ORDER = ['offen','in_arbeit','wartet_auf_freigabe','erledigt','pausiert'];
-  // Ab dieser Verschachtelungstiefe wird optisch nicht weiter eingerueckt.
-  const MAX_INDENT_DEPTH = 3;
-  // Ab so vielen Antworten in einer Box ist sie standardmaessig eingeklappt,
-  // auch wenn der Schritt selbst nicht erledigt ist.
-  const LONG_THREAD_THRESHOLD = 4;
 
   const loginview = document.getElementById('loginview');
   const appview = document.getElementById('appview');
@@ -333,10 +330,6 @@ textarea{min-height:64px;line-height:1.5}
   let detailEditing = false;
   let detailConfirmingDelete = false;
   const editingStepIds = new Set();
-  const replyFormOpenFor = new Set();
-  // Schritt-IDs, deren Ein-/Ausklapp-Zustand vom Default abweicht (Default:
-  // erledigte oder sehr lange Antwortketten eingeklappt, alles andere offen).
-  const collapseOverride = new Set();
   let inputsFocused = 0; // zaehlt fokussierte/aktive Eingabefelder im Detail - waehrend >0 unterdrueckt Polling das Neuzeichnen
   let authToken = null;
   let pollHandle = null;
@@ -637,93 +630,72 @@ textarea{min-height:64px;line-height:1.5}
       '<button class="attachdel" data-act="stepattachdel" data-step="'+step.id+'" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></span>'
     )).join('')+'</div>';
   }
-  function truncate(s, n){
-    s = String(s||'');
-    return s.length>n ? s.slice(0,n-1)+'…' : s;
+  // Zerlegt den Schritt-Baum eines Projekts in Chat-Segmente: jedes Segment
+  // ist eine chronologische Liste von Schritten, die ununterbrochen
+  // aufeinander antworten (0 oder 1 Antwort pro Ebene). Hat ein Schritt
+  // mehrere Antworten (eine Idee, aus der mehrere Varianten wurden, z.B.
+  // "Post 1/2/3"), endet das laufende Segment dort und jede Antwort startet
+  // ein eigenes neues Segment, das mit demselben verzweigenden Schritt
+  // beginnt (als gemeinsamer Ausgangspunkt/Kontext) - so bleibt jeder
+  // Gesprächsfaden fuer sich lesbar, statt alle Varianten in einer
+  // Chronologie zu vermischen (das war explizit der Punkt: eine
+  // durchgehende Chronologie ueber mehrere unabhaengige Ideen hinweg
+  // springt staendig zwischen Themen).
+  function buildChatSegments(topLevelSteps){
+    const segments = [];
+    function walk(step, carried){
+      const messages = carried.concat([step]);
+      const children = Array.isArray(step.replies) ? step.replies : [];
+      if(children.length<=1){
+        if(children.length===1){
+          walk(children[0], messages);
+        } else {
+          segments.push(messages);
+        }
+      } else {
+        // Nur als eigenes Segment sichern, wenn vor der Verzweigung schon
+        // ein echtes Gespraech stand - der Verzweigungsschritt allein (z.B.
+        // die urspruengliche Idee, aus der direkt mehrere Varianten kamen)
+        // wuerde sonst als sinnloses 1-Nachrichten-Segment auftauchen,
+        // obwohl er ohnehin als Kontext in jedem der neuen Segmente steht.
+        if(messages.length>1) segments.push(messages);
+        children.forEach(child=> walk(child, [step]));
+      }
+    }
+    topLevelSteps.forEach(s=> walk(s, []));
+    return segments;
   }
-  // Baut eine Schritt-Zeile ohne eigene Verschachtelungslogik - genutzt
-  // sowohl fuer normal verschachtelte Schritte (repliesBlockHtml kommt von
-  // stepRowHtml) als auch fuer die flache Liste jenseits der Deckeltiefe
-  // (repliesBlockHtml leer, stattdessen optional ctxParent fuer den
-  // "antwortet auf"-Hinweis, da dort die Einrueckung als Kontext fehlt).
-  function stepRowCore(step, repliesBlockHtml, ctxParent){
+  function bubbleHtml(step){
     const isEditing = editingStepIds.has(step.id);
-    const ctxHtml = ctxParent ? '<div class="stepctx">&#8618; zu: '+esc(truncate(ctxParent.text,60))+'</div>' : '';
+    // Datensaetze von vor dem autor-Feld (oder noch nicht zurueckgeschrieben)
+    // gelten als Patricks eigene - sicherer Default als faelschlich "claude".
+    const isClaude = step.autor==='claude';
     const textPart = isEditing
       ? '<input class="textin" id="stepedit-'+step.id+'" value="'+esc(step.text)+'">'
       : '<span class="steptext'+(step.erledigt?' done':'')+'" data-act="stepedit" data-step="'+step.id+'">'+esc(step.text)+'</span>';
-    const replyFormHtml = replyFormOpenFor.has(step.id)
-      ? '<div class="stepreplyform"><input class="textin" id="replyinput-'+step.id+'" placeholder="Antwort…"><button class="ghost small" data-act="replysave" data-step="'+step.id+'">Speichern</button></div>'
-      : '<button class="stepreplylink" data-act="replyopen" data-step="'+step.id+'">+ Antwort</button>';
     return (
-      '<div class="steprow'+(step.erledigt?' done':'')+'" data-step="'+step.id+'">'+
-        '<label class="stepcheck"><input type="checkbox" data-act="stepdone" data-step="'+step.id+'"'+(step.erledigt?' checked':'')+'></label>'+
-        '<div class="stepmain">'+
-          ctxHtml+
-          textPart+
-          stepAttachesHtml(step)+
-          '<label class="stepfilelabel">+ Anhang<input type="file" hidden data-act="stepfile" data-step="'+step.id+'"></label>'+
-          replyFormHtml+
-          repliesBlockHtml+
+      '<div class="bubblerow '+(isClaude?'right':'left')+'">'+
+        '<div class="bubble'+(isClaude?' claude':' patrick')+(step.erledigt?' done':'')+'" data-step="'+step.id+'">'+
+          '<label class="stepcheck"><input type="checkbox" data-act="stepdone" data-step="'+step.id+'"'+(step.erledigt?' checked':'')+'></label>'+
+          '<div class="stepmain">'+
+            textPart+
+            stepAttachesHtml(step)+
+            '<label class="stepfilelabel">+ Anhang<input type="file" hidden data-act="stepfile" data-step="'+step.id+'"></label>'+
+          '</div>'+
+          '<button class="stepdel" data-act="stepdel" data-step="'+step.id+'" title="Schritt löschen">&times;</button>'+
         '</div>'+
-        '<button class="stepdel" data-act="stepdel" data-step="'+step.id+'" title="Schritt löschen">&times;</button>'+
+        '<span class="bubblets">'+esc(isClaude?'Claude':'Patrick')+' · '+fmtTs(step.erstellt)+'</span>'+
       '</div>'
     );
   }
-  // Sammelt alle Nachkommen eines Schritts (beliebig tief) als flache,
-  // chronologisch sortierte Liste samt direktem Elternschritt - fuer die
-  // Darstellung jenseits der Deckeltiefe, wo nicht mehr weiter verschachtelt
-  // wird (siehe stepRowHtml).
-  function flattenDescendants(step){
-    const out = [];
-    (function walk(node){
-      (Array.isArray(node.replies)?node.replies:[]).forEach(c=>{
-        out.push({step:c, parent:node});
-        walk(c);
-      });
-    })(step);
-    out.sort((a,b)=>{
-      const ea = a.step.erstellt||'', eb = b.step.erstellt||'';
-      return ea<eb ? -1 : (ea>eb ? 1 : 0);
-    });
-    return out;
-  }
-  function stepRowHtml(step, depth){
-    depth = depth || 0;
-    const children = Array.isArray(step.replies) ? step.replies : [];
-    // Lange, tiefe oder erledigte Antwortketten sind standardmaessig
-    // eingeklappt, damit eine einzelne Box die Ansicht nicht dominiert -
-    // per Klick auf jeder Ebene einzeln auf-/zuklappbar, unabhaengig vom
-    // Default. Die Tiefenpruefung (nicht nur die Geschwisterzahl) ist
-    // noetig, weil eine lange 1-zu-1-Kette (jede Antwort genau eine
-    // Antwort) nie 4 Geschwister auf einer Ebene hat und sonst nie
-    // automatisch einklappen wuerde, obwohl sie genauso in die Breite
-    // laeuft wie viele Geschwister.
-    let repliesBlockHtml = '';
-    if(children.length){
-      const count = children.length;
-      const label = count+' Antwort'+(count===1?'':'en');
-      const defaultCollapsed = step.erledigt || count>=LONG_THREAD_THRESHOLD || (depth+1)>=MAX_INDENT_DEPTH;
-      const collapsed = collapseOverride.has(step.id) ? !defaultCollapsed : defaultCollapsed;
-      if(collapsed){
-        repliesBlockHtml = '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9656; '+label+' anzeigen</button>';
-      } else if((depth+1)>=MAX_INDENT_DEPTH){
-        // Jenseits der Deckeltiefe wird nicht weiter rekursiv verschachtelt
-        // (jede Ebene wuerde erneut Checkbox, Loeschen-Button und Abstaende
-        // aufaddieren und die Spalte trotz gedeckelter Einrueckung weiter
-        // verengen), sondern alle Nachkommen chronologisch flach gelistet.
-        const flat = flattenDescendants(step);
-        repliesBlockHtml =
-          '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9662; '+label+' einklappen</button>'+
-          '<div class="stepreplies flat">'+flat.map(f=>stepRowCore(f.step, '', f.parent)).join('')+'</div>';
-      } else {
-        const childDepth = depth+1;
-        repliesBlockHtml =
-          '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9662; '+label+' einklappen</button>'+
-          '<div class="stepreplies">'+children.map(c=>stepRowHtml(c, childDepth)).join('')+'</div>';
-      }
-    }
-    return stepRowCore(step, repliesBlockHtml);
+  function chatSegmentHtml(messages){
+    const lastId = messages[messages.length-1].id;
+    return (
+      '<div class="chatbox">'+
+        '<div class="chatmessages">'+messages.map(bubbleHtml).join('')+'</div>'+
+        '<div class="composerrow"><input class="textin" id="composer-'+lastId+'" placeholder="Antworten…"><button class="primary small" data-act="composersend" data-parent="'+lastId+'">Senden</button></div>'+
+      '</div>'
+    );
   }
   function detailViewHtml(d){
     const st = STATUS[d.status] || STATUS.offen;
@@ -742,8 +714,9 @@ textarea{min-height:64px;line-height:1.5}
         )).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Anhänge.</p>';
     const stepTree = buildStepTree(stepsFor(d.id));
-    const stepsHtml = stepTree.length
-      ? '<div class="steplist">'+stepTree.map(s=>stepRowHtml(s, 0)).join('')+'</div>'
+    const segments = buildChatSegments(stepTree);
+    const stepsHtml = segments.length
+      ? '<div class="steplist">'+segments.map(chatSegmentHtml).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Schritte erfasst.</p>';
     return (
       '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
@@ -757,7 +730,7 @@ textarea{min-height:64px;line-height:1.5}
         '<div class="detailsection">'+
           '<p class="field-label">Nächste Schritte</p>'+
           stepsHtml+
-          '<div class="newsteprow"><input class="textin" id="newStepText" placeholder="Neuer Schritt…"><button class="primary small" id="btnAddStep">+ Hinzufügen</button></div>'+
+          '<div class="newsteprow"><input class="textin" id="newStepText" placeholder="Neue Idee…"><button class="primary small" id="btnAddStep">+ Neue Idee</button></div>'+
         '</div>'+
         '<div class="detailsection">'+
           '<p class="field-label">Anhänge (allgemein, am Projekt)</p>'+
@@ -894,45 +867,18 @@ textarea{min-height:64px;line-height:1.5}
         if(ok) await refreshData(true, true);
       };
     });
-    detailview.querySelectorAll('[data-act="replyopen"]').forEach(el=>{
-      el.onclick = ()=>{
-        replyFormOpenFor.add(el.getAttribute('data-step'));
-        renderDetail(id);
-      };
-    });
-    detailview.querySelectorAll('input[id^="replyinput-"]').forEach(el=>{
-      const parentId = el.id.replace('replyinput-','');
+    // ---- Chat-Composer je Segment (eine Zeile am Ende jeder .chatbox) ----
+    detailview.querySelectorAll('input[id^="composer-"]').forEach(el=>{
+      const parentId = el.id.replace('composer-','');
       el.addEventListener('focus', ()=>inputsFocused++);
       el.addEventListener('blur', ()=>inputsFocused--);
-      const save = ()=>{
+      const send = ()=>{
         const text = (el.value||'').trim();
-        replyFormOpenFor.delete(parentId);
         if(text) createStep(id, text, parentId);
-        else renderDetail(id);
       };
-      el.addEventListener('keydown', (e)=>{
-        if(e.key==='Enter'){ e.preventDefault(); save(); }
-        if(e.key==='Escape'){ replyFormOpenFor.delete(parentId); renderDetail(id); }
-      });
-      el.focus();
-    });
-    detailview.querySelectorAll('[data-act="replysave"]').forEach(el=>{
-      el.onclick = ()=>{
-        const parentId = el.getAttribute('data-step');
-        const input = document.getElementById('replyinput-'+parentId);
-        const text = (input.value||'').trim();
-        replyFormOpenFor.delete(parentId);
-        if(text) createStep(id, text, parentId);
-        else renderDetail(id);
-      };
-    });
-    detailview.querySelectorAll('[data-act="stepcollapse"]').forEach(el=>{
-      el.onclick = ()=>{
-        const sid = el.getAttribute('data-step');
-        if(collapseOverride.has(sid)) collapseOverride.delete(sid);
-        else collapseOverride.add(sid);
-        renderDetail(id);
-      };
+      el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
+      const btn = detailview.querySelector('[data-act="composersend"][data-parent="'+parentId+'"]');
+      if(btn) btn.onclick = send;
     });
   }
   function render(){
@@ -947,8 +893,6 @@ textarea{min-height:64px;line-height:1.5}
       detailEditing = false;
       detailConfirmingDelete = false;
       editingStepIds.clear();
-      replyFormOpenFor.clear();
-      collapseOverride.clear();
       inputsFocused = 0;
       renderList();
     }
@@ -1019,7 +963,11 @@ textarea{min-height:64px;line-height:1.5}
   }
   async function createStep(projectId, text, parentStepId){
     const fields = {
-      projekt: projectId, text, erledigt: false,
+      // Jeder Schritt, der hier aus der Web-UI entsteht, ist per Definition
+      // von Patrick - Claude schreibt ausschliesslich ueber den
+      // MCP-Connector bzw. die Skill-eigene PocketBase-Anbindung, nie über
+      // diese Oberflaeche.
+      projekt: projectId, text, erledigt: false, autor: 'patrick',
       erstellt: nowIso(), aktualisiert: nowIso()
     };
     if(parentStepId) fields.antwort_auf = parentStepId;

@@ -35,22 +35,24 @@ allgemein ans Projekt.
 Felder: `projekt` (Relation auf `projekte`), `text`, `erledigt` (bool),
 `anhaenge` (Dateifeld, mehrere, eigene je Schritt), `erstellt`,
 `aktualisiert`, `antwort_auf` (Selbst-Relation auf `projekt_schritte`,
-nullable, seit 08.10.2026 — siehe unten).
+nullable, seit 08.10.2026 — siehe unten), `autor` (select `patrick` /
+`claude`, required, seit 08.10.2026 — siehe "Chat-Darstellung" unten).
 
 Schritte zu einem Projekt lesen:
 ```
 GET /api/collections/projekt_schritte/records?filter=projekt="<projekt-id>"&sort=erstellt
 ```
 
-**`antwort_auf` — Antworten gehören in die Box ihrer Idee, nicht daneben:**
+**`antwort_auf` — Antworten gehören zum Gespräch ihrer Idee, nicht daneben:**
 Verweist ein Schritt per `antwort_auf` auf einen anderen, zeigt die
-Oberfläche ihn eingerückt innerhalb von dessen Box statt als eigene,
-gleichrangige Zeile. Wird ein Auftrag aus einem bestehenden Schritt heraus
-bearbeitet (z. B. der letzte Eintrag enthält eine Anweisung), gehört das
-Ergebnis als Antwort **auf genau diesen Schritt**, nicht als neuer
-Top-Level-Schritt daneben — sonst reißt es optisch wieder auseinander,
-was inhaltlich zusammengehört (das war explizit der Punkt, den Patrick
-nach der ersten Version bemängelt hat).
+Oberfläche ihn als Chat-Nachricht in derselben Unterhaltung statt als
+eigene, unabhängige Zeile (Details zur Darstellung unten). Wird ein
+Auftrag aus einem bestehenden Schritt heraus bearbeitet (z. B. der letzte
+Eintrag enthält eine Anweisung), gehört das Ergebnis als Antwort **auf
+genau diesen Schritt**, nicht als neuer Top-Level-Schritt daneben — sonst
+reißt es optisch wieder auseinander, was inhaltlich zusammengehört (das
+war explizit der Punkt, den Patrick nach der ersten Version bemängelt
+hat).
 
 **Konvention für Aufträge:** Ein Projekt mit gesetztem `claude_auftrag`
 ist bewusst an Claude übergeben worden — der Nutzer hat im Leitstand auf
@@ -80,9 +82,13 @@ danach filtern (`filter=name="..."`), unabhängig von `claude_auftrag`.
    ```
    POST /api/collections/projekt_schritte/records
    Body: {"projekt": "<projekt-id>", "antwort_auf": "<id des Schritts, auf den geantwortet wird>",
-          "text": "...", "erledigt": false,
+          "text": "...", "erledigt": false, "autor": "claude",
           "erstellt": "<jetzt, ISO 8601>", "aktualisiert": "<jetzt>"}
    ```
+   `autor` ist Pflichtfeld — bei allem, was eine Sitzung schreibt, immer
+   `"claude"` (nie für Patrick raten). Über den `leitstand-mcp`-Connector
+   wird es serverseitig fest gesetzt, nur beim rohen HTTP-Weg hier explizit
+   mitschicken.
    (`antwort_auf` weglassen, wenn es sich um einen wirklich neuen,
    eigenständigen nächsten Schritt handelt statt um eine Antwort auf
    einen bestehenden.)
@@ -93,23 +99,35 @@ danach filtern (`filter=name="..."`), unabhängig von `claude_auftrag`.
 4. Niemals `aktualisiert` von Hand setzen auf einen Wert in der
    Vergangenheit — aktuelle Zeit beim Schreiben.
 
-### Darstellung bei vielen/tiefen Antworten (seit 08.10.2026)
+### Chat-Darstellung (seit 08.10.2026, ersetzt die frühere Baum-/Einklapp-Ansicht)
 
-Je länger eine Antwortkette wird, desto eher wurde die Box unübersichtlich —
-die Spalte wurde mit jeder Ebene schmaler, und jede noch so kleine Antwort
-blieb für immer sichtbar. Zwei Gegenmaßnahmen in `index.html`:
+Eine erste Version zeigte Antworten als verschachtelte, eingerückte Boxen.
+Bei langen oder tiefen Ketten wurde die Spalte dabei immer schmaler (jede
+Ebene fügte erneut Checkbox, Löschen-Button und Abstände hinzu, unabhängig
+von der Einrückung selbst) — zwei Zwischenlösungen (Einrücktiefe deckeln,
+dann zusätzlich automatisches Einklappen) haben das Grundproblem nur
+verschoben. Die jetzige Lösung verzichtet komplett auf Verschachtelung:
 
-- **Einrücktiefe gedeckelt** (`MAX_INDENT_DEPTH = 3`): Ab der dritten
-  Verschachtelungsebene wird nicht weiter eingerückt (`.stepreplies.flat`)
-  — strukturell bleibt der Baum beliebig tief, nur optisch nicht.
-- **Automatisches Einklappen** (`stepRowHtml`, Parameter `depth`): Ein
-  Schritt mit Antworten ist standardmäßig eingeklappt, wenn er selbst
-  `erledigt` ist, oder wenn er `LONG_THREAD_THRESHOLD = 4` oder mehr
-  direkte Antworten hat. Jede Box ist per Klick auf den Toggle
-  (▸/▾ + Anzahl) einzeln auf- und zuklappbar, unabhängig vom Default
-  (`collapseOverride`-Set, pro Schritt-ID). Zustand wird beim Verlassen
-  der Detailansicht zurückgesetzt, bleibt aber über Polling-Refreshes
-  derselben Ansicht hinweg erhalten.
+- **`buildChatSegments()`** zerlegt den `antwort_auf`-Baum eines Projekts
+  in flache Gesprächs-"Segmente": eine Kette von Schritten, die
+  ununterbrochen genau einer auf den anderen antworten. Hat ein Schritt
+  **mehrere** Antworten (z. B. eine Idee, aus der mehrere Varianten
+  wurden — "Post 1/2/3"), endet das laufende Segment dort, und **jede**
+  Antwort startet ein neues eigenes Segment, das mit demselben
+  verzweigenden Schritt als gemeinsamem Kontext beginnt. So bleibt jeder
+  Gesprächsfaden für sich lesbar, statt dass mehrere unabhängige Themen in
+  einer Chronologie durcheinanderspringen (das war Patricks expliziter
+  Punkt gegen eine einzige durchgehende Zeitleiste pro Projekt).
+- Jedes Segment wird als eigene `.chatbox` gerendert — eine Liste von
+  Chat-Blasen (`bubbleHtml()`), **Patrick links, Claude rechts** je nach
+  `autor`-Feld (siehe oben) —, darunter ein immer sichtbares
+  Antwort-Eingabefeld, das an die letzte Nachricht des Segments anhängt
+  (`antwort_auf` = deren ID). Da innerhalb eines Segments nie verschachtelt
+  wird, bleibt die Breite unabhängig von der Länge der Konversation
+  konstant — kein Einklappen mehr nötig.
+- Mehrere `projekt_schritte` ohne `antwort_auf` (eigenständige, neue Ideen)
+  erzeugen entsprechend mehrere unabhängige `.chatbox`-Blöcke
+  untereinander.
 
 API-Beispiel (api_clients-Token `$TOKEN`):
 ```
