@@ -218,6 +218,10 @@ textarea{min-height:64px;line-height:1.5}
   cursor:pointer;padding:2px 0;margin-top:4px;width:fit-content;text-align:left;
 }
 .stepcollapse-toggle:hover{color:var(--accent)}
+/* Hinweis "antwortet auf", wenn eine Antwort jenseits der Deckeltiefe
+   flach statt eingerueckt dargestellt wird - ersetzt die fehlende
+   visuelle Verschachtelung als Orientierung. */
+.stepctx{color:var(--muted);font-size:.72rem;margin-bottom:3px}
 
 .loginwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 .loginbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:360px;width:100%}
@@ -633,15 +637,59 @@ textarea{min-height:64px;line-height:1.5}
       '<button class="attachdel" data-act="stepattachdel" data-step="'+step.id+'" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></span>'
     )).join('')+'</div>';
   }
-  function stepRowHtml(step, depth){
-    depth = depth || 0;
+  function truncate(s, n){
+    s = String(s||'');
+    return s.length>n ? s.slice(0,n-1)+'…' : s;
+  }
+  // Baut eine Schritt-Zeile ohne eigene Verschachtelungslogik - genutzt
+  // sowohl fuer normal verschachtelte Schritte (repliesBlockHtml kommt von
+  // stepRowHtml) als auch fuer die flache Liste jenseits der Deckeltiefe
+  // (repliesBlockHtml leer, stattdessen optional ctxParent fuer den
+  // "antwortet auf"-Hinweis, da dort die Einrueckung als Kontext fehlt).
+  function stepRowCore(step, repliesBlockHtml, ctxParent){
     const isEditing = editingStepIds.has(step.id);
+    const ctxHtml = ctxParent ? '<div class="stepctx">&#8618; zu: '+esc(truncate(ctxParent.text,60))+'</div>' : '';
     const textPart = isEditing
       ? '<input class="textin" id="stepedit-'+step.id+'" value="'+esc(step.text)+'">'
       : '<span class="steptext'+(step.erledigt?' done':'')+'" data-act="stepedit" data-step="'+step.id+'">'+esc(step.text)+'</span>';
     const replyFormHtml = replyFormOpenFor.has(step.id)
       ? '<div class="stepreplyform"><input class="textin" id="replyinput-'+step.id+'" placeholder="Antwort…"><button class="ghost small" data-act="replysave" data-step="'+step.id+'">Speichern</button></div>'
       : '<button class="stepreplylink" data-act="replyopen" data-step="'+step.id+'">+ Antwort</button>';
+    return (
+      '<div class="steprow'+(step.erledigt?' done':'')+'" data-step="'+step.id+'">'+
+        '<label class="stepcheck"><input type="checkbox" data-act="stepdone" data-step="'+step.id+'"'+(step.erledigt?' checked':'')+'></label>'+
+        '<div class="stepmain">'+
+          ctxHtml+
+          textPart+
+          stepAttachesHtml(step)+
+          '<label class="stepfilelabel">+ Anhang<input type="file" hidden data-act="stepfile" data-step="'+step.id+'"></label>'+
+          replyFormHtml+
+          repliesBlockHtml+
+        '</div>'+
+        '<button class="stepdel" data-act="stepdel" data-step="'+step.id+'" title="Schritt löschen">&times;</button>'+
+      '</div>'
+    );
+  }
+  // Sammelt alle Nachkommen eines Schritts (beliebig tief) als flache,
+  // chronologisch sortierte Liste samt direktem Elternschritt - fuer die
+  // Darstellung jenseits der Deckeltiefe, wo nicht mehr weiter verschachtelt
+  // wird (siehe stepRowHtml).
+  function flattenDescendants(step){
+    const out = [];
+    (function walk(node){
+      (Array.isArray(node.replies)?node.replies:[]).forEach(c=>{
+        out.push({step:c, parent:node});
+        walk(c);
+      });
+    })(step);
+    out.sort((a,b)=>{
+      const ea = a.step.erstellt||'', eb = b.step.erstellt||'';
+      return ea<eb ? -1 : (ea>eb ? 1 : 0);
+    });
+    return out;
+  }
+  function stepRowHtml(step, depth){
+    depth = depth || 0;
     const children = Array.isArray(step.replies) ? step.replies : [];
     // Lange, tiefe oder erledigte Antwortketten sind standardmaessig
     // eingeklappt, damit eine einzelne Box die Ansicht nicht dominiert -
@@ -659,27 +707,23 @@ textarea{min-height:64px;line-height:1.5}
       const collapsed = collapseOverride.has(step.id) ? !defaultCollapsed : defaultCollapsed;
       if(collapsed){
         repliesBlockHtml = '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9656; '+label+' anzeigen</button>';
-      } else {
-        const childDepth = depth+1;
-        const wrapClass = childDepth>=MAX_INDENT_DEPTH ? 'stepreplies flat' : 'stepreplies';
+      } else if((depth+1)>=MAX_INDENT_DEPTH){
+        // Jenseits der Deckeltiefe wird nicht weiter rekursiv verschachtelt
+        // (jede Ebene wuerde erneut Checkbox, Loeschen-Button und Abstaende
+        // aufaddieren und die Spalte trotz gedeckelter Einrueckung weiter
+        // verengen), sondern alle Nachkommen chronologisch flach gelistet.
+        const flat = flattenDescendants(step);
         repliesBlockHtml =
           '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9662; '+label+' einklappen</button>'+
-          '<div class="'+wrapClass+'">'+children.map(c=>stepRowHtml(c, childDepth)).join('')+'</div>';
+          '<div class="stepreplies flat">'+flat.map(f=>stepRowCore(f.step, '', f.parent)).join('')+'</div>';
+      } else {
+        const childDepth = depth+1;
+        repliesBlockHtml =
+          '<button class="stepcollapse-toggle" data-act="stepcollapse" data-step="'+step.id+'">&#9662; '+label+' einklappen</button>'+
+          '<div class="stepreplies">'+children.map(c=>stepRowHtml(c, childDepth)).join('')+'</div>';
       }
     }
-    return (
-      '<div class="steprow'+(step.erledigt?' done':'')+'" data-step="'+step.id+'">'+
-        '<label class="stepcheck"><input type="checkbox" data-act="stepdone" data-step="'+step.id+'"'+(step.erledigt?' checked':'')+'></label>'+
-        '<div class="stepmain">'+
-          textPart+
-          stepAttachesHtml(step)+
-          '<label class="stepfilelabel">+ Anhang<input type="file" hidden data-act="stepfile" data-step="'+step.id+'"></label>'+
-          replyFormHtml+
-          repliesBlockHtml+
-        '</div>'+
-        '<button class="stepdel" data-act="stepdel" data-step="'+step.id+'" title="Schritt löschen">&times;</button>'+
-      '</div>'
-    );
+    return stepRowCore(step, repliesBlockHtml);
   }
   function detailViewHtml(d){
     const st = STATUS[d.status] || STATUS.offen;
