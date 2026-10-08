@@ -8,7 +8,8 @@
 /*
   Leitwarte / control-room panel: a status strip of live counters across
   the top, projects below as short instrument tiles in a wrapping grid;
-  clicking one opens a dedicated detail panel with the full record.
+  clicking one opens a dedicated detail panel with the full record, its
+  next steps now individual rows instead of one block of text.
   Deliberately single dark theme: a control room is dark by trade, not
   by default.
 */
@@ -172,6 +173,35 @@ textarea{min-height:64px;line-height:1.5}
 .uploadmsg{font-size:.78rem;color:var(--muted);margin:6px 0 0}
 .uploadmsg.err{color:var(--s-pausiert)}
 
+.steplist{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.steprow{
+  display:flex;align-items:flex-start;gap:10px;background:var(--panel-2);
+  border:1px solid var(--border);border-radius:8px;padding:9px 10px;
+}
+.steprow.done{opacity:.6}
+.stepcheck{flex:none;padding-top:2px}
+.stepcheck input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.stepmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.steptext{font-size:.9rem;line-height:1.5;word-wrap:break-word;cursor:text}
+.steptext:hover{color:var(--accent)}
+.steptext.done{text-decoration:line-through;color:var(--muted)}
+.stepattaches{display:flex;flex-wrap:wrap;gap:6px}
+.stepattach{
+  display:inline-flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--border);
+  border-radius:6px;padding:3px 7px;font-size:.74rem;
+}
+.stepattach a{word-break:break-all}
+.stepattach .attachdel{font-size:.8rem}
+.stepfilelabel{
+  display:inline-flex;align-items:center;gap:4px;font-size:.74rem;color:var(--muted);
+  cursor:pointer;width:fit-content;
+}
+.stepfilelabel:hover{color:var(--accent)}
+.stepdel{flex:none;background:transparent;border:none;color:var(--s-pausiert);cursor:pointer;font-size:1rem;padding:2px 4px;line-height:1}
+.stepdel:hover{text-decoration:underline}
+.newsteprow{display:flex;gap:8px;flex-wrap:wrap}
+.newsteprow input{flex:1;min-width:160px}
+
 .loginwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 .loginbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:360px;width:100%}
 .loginbox h1{font-size:1.1rem;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px}
@@ -241,6 +271,7 @@ textarea{min-height:64px;line-height:1.5}
   const PB_URL = 'https://pb.ascensus.fit';
   const AUTH_COLLECTION = 'api_clients';
   const DATA_COLLECTION = 'projekte';
+  const STEPS_COLLECTION = 'projekt_schritte';
   const AUTH_STORAGE_KEY = 'leitstand_pb_auth';
   const POLL_MS = 25000;
 
@@ -270,10 +301,13 @@ textarea{min-height:64px;line-height:1.5}
   const clockEl = document.getElementById('clock');
 
   let docs = [];
+  let stepsByProject = {};
   let loaded = false;
   let showNewForm = false;
   let detailEditing = false;
   let detailConfirmingDelete = false;
+  const editingStepIds = new Set();
+  let inputsFocused = 0; // zaehlt fokussierte/aktive Eingabefelder im Detail - waehrend >0 unterdrueckt Polling das Neuzeichnen
   let authToken = null;
   let pollHandle = null;
 
@@ -315,6 +349,9 @@ textarea{min-height:64px;line-height:1.5}
     const h = location.hash.replace(/^#/,'');
     return h || null;
   }
+  function stepsFor(projectId){
+    return stepsByProject[projectId] || [];
+  }
 
   // ---------- auth storage ----------
   function loadAuth(){
@@ -330,7 +367,7 @@ textarea{min-height:64px;line-height:1.5}
     try{ localStorage.removeItem(AUTH_STORAGE_KEY); }catch(e){}
   }
 
-  // ---------- PocketBase client ----------
+  // ---------- PocketBase client (collection-generic) ----------
   async function pbRaw(path, opts){
     opts = opts || {};
     const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
@@ -360,49 +397,49 @@ textarea{min-height:64px;line-height:1.5}
     }
     return false;
   }
-  async function pbList(){
-    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records?sort=-aktualisiert&perPage=200');
+  async function pbList(collection, query){
+    const r = await pbRaw('/api/collections/'+collection+'/records'+(query||''));
     if(r.status===401){ onAuthLost(); return null; }
     if(r.status!==200 || !r.data) return null;
     return r.data.items || [];
   }
-  async function pbCreate(fields){
-    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records', {method:'POST', body:JSON.stringify(fields)});
+  async function pbCreate(collection, fields){
+    const r = await pbRaw('/api/collections/'+collection+'/records', {method:'POST', body:JSON.stringify(fields)});
     if(r.status===401){ onAuthLost(); return null; }
     return (r.status===200||r.status===201) ? r.data : null;
   }
-  async function pbUpdate(id, fields){
-    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'PATCH', body:JSON.stringify(fields)});
+  async function pbUpdate(collection, id, fields){
+    const r = await pbRaw('/api/collections/'+collection+'/records/'+id, {method:'PATCH', body:JSON.stringify(fields)});
     if(r.status===401){ onAuthLost(); return null; }
     return (r.status===200||r.status===201) ? r.data : null;
   }
-  async function pbDelete(id){
-    const r = await pbRaw('/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'DELETE'});
+  async function pbDelete(collection, id){
+    const r = await pbRaw('/api/collections/'+collection+'/records/'+id, {method:'DELETE'});
     if(r.status===401){ onAuthLost(); return false; }
     return r.status===204 || r.status===200;
   }
-  function attachmentUrl(recordId, filename){
-    return PB_URL+'/api/files/'+DATA_COLLECTION+'/'+recordId+'/'+encodeURIComponent(filename);
+  function attachmentUrl(collection, recordId, filename){
+    return PB_URL+'/api/files/'+collection+'/'+recordId+'/'+encodeURIComponent(filename);
   }
   // Datei-Upload braucht multipart/form-data statt JSON, deshalb kein
   // pbRaw() hier (das setzt immer Content-Type: application/json) - der
   // Browser muss die Boundary fuer FormData selbst setzen koennen.
-  async function pbUploadAttachment(id, file){
+  async function pbUploadFile(collection, id, field, file){
     const fd = new FormData();
-    fd.append('anhaenge', file);
+    fd.append(field, file);
     const headers = {};
     if(authToken) headers['Authorization'] = authToken;
-    const res = await fetch(PB_URL+'/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'PATCH', headers, body:fd});
+    const res = await fetch(PB_URL+'/api/collections/'+collection+'/records/'+id, {method:'PATCH', headers, body:fd});
     if(res.status===401){ onAuthLost(); return null; }
     if(res.status!==200 && res.status!==201) return null;
     try{ return await res.json(); }catch(e){ return null; }
   }
-  async function pbDeleteAttachment(id, filename){
+  async function pbDeleteFile(collection, id, field, filename){
     const fd = new FormData();
-    fd.append('anhaenge-', filename); // PocketBase-Syntax: "<feld>-" entfernt diese eine Datei aus dem Mehrfach-Dateifeld
+    fd.append(field+'-', filename); // PocketBase-Syntax: "<feld>-" entfernt diese eine Datei aus dem Mehrfach-Dateifeld
     const headers = {};
     if(authToken) headers['Authorization'] = authToken;
-    const res = await fetch(PB_URL+'/api/collections/'+DATA_COLLECTION+'/records/'+id, {method:'PATCH', headers, body:fd});
+    const res = await fetch(PB_URL+'/api/collections/'+collection+'/records/'+id, {method:'PATCH', headers, body:fd});
     if(res.status===401){ onAuthLost(); return false; }
     return res.status===200 || res.status===201;
   }
@@ -456,7 +493,7 @@ textarea{min-height:64px;line-height:1.5}
   tickClock();
   setInterval(tickClock, 1000);
 
-  // ---------- rendering ----------
+  // ---------- rendering: list ----------
   function renderStats(){
     const counts = {};
     STATUS_ORDER.forEach(k=>counts[k]=0);
@@ -476,13 +513,23 @@ textarea{min-height:64px;line-height:1.5}
       '<div class="card" style="border-left-color:var(--accent)">'+
         '<div class="formrow"><input class="textin" id="newName" placeholder="Projektname" /></div>'+
         '<div class="formrow"><label class="field-label">Stand (ein Punkt pro Zeile)</label><textarea id="newStand" placeholder="Was ist bisher passiert?&#10;Ein Punkt pro Zeile"></textarea></div>'+
-        '<div class="formrow"><label class="field-label">Nächste Schritte (ein Punkt pro Zeile)</label><textarea id="newSchritte" placeholder="Was ist noch zu tun?&#10;Ein Punkt pro Zeile"></textarea></div>'+
         '<div class="formactions">'+
           '<button class="ghost small" id="newCancel">Abbrechen</button>'+
           '<button class="primary small" id="newSave">Anlegen</button>'+
         '</div>'+
       '</div>'
     );
+  }
+  function stepsTeaserHtml(steps, limit){
+    if(!steps.length) return '<p class="empty-hint">Noch keine nächsten Schritte erfasst.</p>';
+    const pending = steps.filter(s=>!s.erledigt);
+    if(!pending.length) return '<p class="empty-hint">Alle Schritte erledigt.</p>';
+    const shown = pending.slice(0, limit);
+    let html = '<ul class="bullets">'+shown.map(s=>'<li>'+esc(s.text)+'</li>').join('')+'</ul>';
+    if(pending.length>limit){
+      html += '<p class="more">+'+(pending.length-limit)+' weitere</p>';
+    }
+    return html;
   }
   function cardHtml(d){
     const st = STATUS[d.status] || STATUS.offen;
@@ -493,7 +540,7 @@ textarea{min-height:64px;line-height:1.5}
           (d.claude_auftrag ? '<span class="claudetag">&rarr; Claude</span>' : '<span class="ts">'+fmtTs(d.aktualisiert)+'</span>')+
         '</div>'+
         '<h3 data-act="open" data-id="'+d.id+'">'+esc(d.name)+'</h3>'+
-        bulletsHtml(d.schritte, 3, 'Noch keine nächsten Schritte erfasst.')+
+        stepsTeaserHtml(stepsFor(d.id), 3)+
         '<button class="link small" data-act="open" data-id="'+d.id+'">Mehr Details &rarr;</button>'+
       '</div>'
     );
@@ -515,17 +562,43 @@ textarea{min-height:64px;line-height:1.5}
       if(nameInput) nameInput.focus();
     }
   }
+
+  // ---------- rendering: detail ----------
   function detailEditHtml(d){
     return (
       '<div class="detailpanel" style="border-left-color:var('+(STATUS[d.status]||STATUS.offen).css+')">'+
         '<div class="detailback"><button class="ghost small" id="backBtn">&larr; Zur Übersicht</button></div>'+
         '<div class="formrow"><input class="textin" id="edName" value="'+esc(d.name)+'" /></div>'+
         '<div class="formrow" style="margin-top:10px"><label class="field-label">Stand (ein Punkt pro Zeile)</label><textarea id="edStand" style="min-height:120px">'+esc(d.stand)+'</textarea></div>'+
-        '<div class="formrow" style="margin-top:10px"><label class="field-label">Nächste Schritte (ein Punkt pro Zeile)</label><textarea id="edSchritte" style="min-height:120px">'+esc(d.schritte)+'</textarea></div>'+
         '<div class="formactions" style="margin-top:14px">'+
           '<button class="ghost small" id="edCancel">Abbrechen</button>'+
           '<button class="primary small" id="edSave">Speichern</button>'+
         '</div>'+
+      '</div>'
+    );
+  }
+  function stepAttachesHtml(step){
+    const files = Array.isArray(step.anhaenge) ? step.anhaenge : [];
+    if(!files.length) return '';
+    return '<div class="stepattaches">'+files.map(fn=>(
+      '<span class="stepattach"><a href="'+attachmentUrl(STEPS_COLLECTION, step.id, fn)+'" target="_blank" rel="noopener">'+esc(fn)+'</a>'+
+      '<button class="attachdel" data-act="stepattachdel" data-step="'+step.id+'" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></span>'
+    )).join('')+'</div>';
+  }
+  function stepRowHtml(step){
+    const isEditing = editingStepIds.has(step.id);
+    const textPart = isEditing
+      ? '<input class="textin" id="stepedit-'+step.id+'" value="'+esc(step.text)+'">'
+      : '<span class="steptext'+(step.erledigt?' done':'')+'" data-act="stepedit" data-step="'+step.id+'">'+esc(step.text)+'</span>';
+    return (
+      '<div class="steprow'+(step.erledigt?' done':'')+'" data-step="'+step.id+'">'+
+        '<label class="stepcheck"><input type="checkbox" data-act="stepdone" data-step="'+step.id+'"'+(step.erledigt?' checked':'')+'></label>'+
+        '<div class="stepmain">'+
+          textPart+
+          stepAttachesHtml(step)+
+          '<label class="stepfilelabel">+ Anhang<input type="file" hidden data-act="stepfile" data-step="'+step.id+'"></label>'+
+        '</div>'+
+        '<button class="stepdel" data-act="stepdel" data-step="'+step.id+'" title="Schritt löschen">&times;</button>'+
       '</div>'
     );
   }
@@ -541,10 +614,14 @@ textarea{min-height:64px;line-height:1.5}
     const files = Array.isArray(d.anhaenge) ? d.anhaenge : [];
     const attachList = files.length
       ? '<div class="attachlist">'+files.map(fn=>(
-          '<div class="attachrow"><a href="'+attachmentUrl(d.id, fn)+'" target="_blank" rel="noopener">'+esc(fn)+'</a>'+
+          '<div class="attachrow"><a href="'+attachmentUrl(DATA_COLLECTION, d.id, fn)+'" target="_blank" rel="noopener">'+esc(fn)+'</a>'+
           '<button class="attachdel" data-act="attachdel" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></div>'
         )).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Anhänge.</p>';
+    const steps = stepsFor(d.id);
+    const stepsHtml = steps.length
+      ? '<div class="steplist">'+steps.map(stepRowHtml).join('')+'</div>'
+      : '<p class="empty-hint">Noch keine Schritte erfasst.</p>';
     return (
       '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
         '<div class="detailback"><button class="ghost small" id="backBtn">&larr; Zur Übersicht</button></div>'+
@@ -554,9 +631,13 @@ textarea{min-height:64px;line-height:1.5}
         '</div>'+
         claudeRow+
         '<div class="detailsection"><p class="field-label">Stand</p>'+bulletsHtml(d.stand, null, 'Noch kein Stand erfasst.')+'</div>'+
-        '<div class="detailsection"><p class="field-label">Nächste Schritte</p>'+bulletsHtml(d.schritte, null, 'Noch keine nächsten Schritte erfasst.')+'</div>'+
         '<div class="detailsection">'+
-          '<p class="field-label">Anhänge</p>'+
+          '<p class="field-label">Nächste Schritte</p>'+
+          stepsHtml+
+          '<div class="newsteprow"><input class="textin" id="newStepText" placeholder="Neuer Schritt…"><button class="primary small" id="btnAddStep">+ Hinzufügen</button></div>'+
+        '</div>'+
+        '<div class="detailsection">'+
+          '<p class="field-label">Anhänge (allgemein, am Projekt)</p>'+
           attachList+
           '<div class="uploadrow"><input type="file" id="attachInput"><button class="ghost small" id="attachUpload">Hochladen</button></div>'+
           '<p class="uploadmsg" id="attachMsg"></p>'+
@@ -577,56 +658,119 @@ textarea{min-height:64px;line-height:1.5}
     detailview.innerHTML = detailEditing ? detailEditHtml(d) : detailViewHtml(d);
     document.getElementById('backBtn').onclick = closeDetail;
     if(detailEditing){
+      const edStand = document.getElementById('edStand');
+      edStand.addEventListener('focus', ()=>inputsFocused++);
+      edStand.addEventListener('blur', ()=>inputsFocused--);
       document.getElementById('edCancel').onclick = ()=>{ detailEditing=false; renderDetail(id); };
       document.getElementById('edSave').onclick = ()=>{
         const name = (document.getElementById('edName').value||'').trim();
         const stand = document.getElementById('edStand').value||'';
-        const schritte = document.getElementById('edSchritte').value||'';
         if(!name) return;
-        updateDoc(id, {name, stand, schritte}, true);
+        updateDoc(id, {name, stand}, true);
       };
-    } else {
-      const statusSel = document.getElementById('detStatus');
-      if(statusSel) statusSel.onchange = ()=> updateDoc(id, {status: statusSel.value});
-      const bcs = document.getElementById('btnClaudeSend');
-      if(bcs) bcs.onclick = ()=> updateDoc(id, {claude_auftrag: nowIso()});
-      const bcc = document.getElementById('btnClaudeClear');
-      if(bcc) bcc.onclick = ()=> updateDoc(id, {claude_auftrag: null});
-      const attachInput = document.getElementById('attachInput');
-      const attachUpload = document.getElementById('attachUpload');
-      const attachMsg = document.getElementById('attachMsg');
-      if(attachUpload) attachUpload.onclick = async ()=>{
-        const file = attachInput && attachInput.files && attachInput.files[0];
-        if(!file) return;
-        attachUpload.disabled = true;
-        attachMsg.className = 'uploadmsg';
-        attachMsg.textContent = 'Lädt hoch …';
-        const rec = await pbUploadAttachment(id, file);
-        attachUpload.disabled = false;
-        if(rec){
-          await refreshData(true, true);
-        } else {
-          attachMsg.className = 'uploadmsg err';
-          attachMsg.textContent = 'Upload fehlgeschlagen — bitte erneut versuchen.';
-        }
-      };
-      detailview.querySelectorAll('[data-act="attachdel"]').forEach(el=>{
-        el.onclick = async ()=>{
-          const fn = el.getAttribute('data-file');
-          const ok = await pbDeleteAttachment(id, fn);
-          if(ok) await refreshData(true, true);
-        };
-      });
-      if(detailConfirmingDelete){
-        document.getElementById('delConfirm').onclick = ()=> deleteDoc(id);
-        document.getElementById('delCancel').onclick = ()=>{ detailConfirmingDelete=false; renderDetail(id); };
-      } else {
-        const be = document.getElementById('btnEdit');
-        const bd = document.getElementById('btnDelAsk');
-        if(be) be.onclick = ()=>{ detailEditing=true; renderDetail(id); };
-        if(bd) bd.onclick = ()=>{ detailConfirmingDelete=true; renderDetail(id); };
-      }
+      return;
     }
+    // ---- Status, Claude-Markierung, projektweite Anhaenge ----
+    const statusSel = document.getElementById('detStatus');
+    if(statusSel) statusSel.onchange = ()=> updateDoc(id, {status: statusSel.value});
+    const bcs = document.getElementById('btnClaudeSend');
+    if(bcs) bcs.onclick = ()=> updateDoc(id, {claude_auftrag: nowIso()});
+    const bcc = document.getElementById('btnClaudeClear');
+    if(bcc) bcc.onclick = ()=> updateDoc(id, {claude_auftrag: null});
+    const attachInput = document.getElementById('attachInput');
+    const attachUpload = document.getElementById('attachUpload');
+    const attachMsg = document.getElementById('attachMsg');
+    if(attachUpload) attachUpload.onclick = async ()=>{
+      const file = attachInput && attachInput.files && attachInput.files[0];
+      if(!file) return;
+      attachUpload.disabled = true;
+      attachMsg.className = 'uploadmsg';
+      attachMsg.textContent = 'Lädt hoch …';
+      const rec = await pbUploadFile(DATA_COLLECTION, id, 'anhaenge', file);
+      attachUpload.disabled = false;
+      if(rec){
+        await refreshData(true, true);
+      } else {
+        attachMsg.className = 'uploadmsg err';
+        attachMsg.textContent = 'Upload fehlgeschlagen — bitte erneut versuchen.';
+      }
+    };
+    detailview.querySelectorAll('[data-act="attachdel"]').forEach(el=>{
+      el.onclick = async ()=>{
+        const fn = el.getAttribute('data-file');
+        const ok = await pbDeleteFile(DATA_COLLECTION, id, 'anhaenge', fn);
+        if(ok) await refreshData(true, true);
+      };
+    });
+    if(detailConfirmingDelete){
+      document.getElementById('delConfirm').onclick = ()=> deleteDoc(id);
+      document.getElementById('delCancel').onclick = ()=>{ detailConfirmingDelete=false; renderDetail(id); };
+    } else {
+      const be = document.getElementById('btnEdit');
+      const bd = document.getElementById('btnDelAsk');
+      if(be) be.onclick = ()=>{ detailEditing=true; renderDetail(id); };
+      if(bd) bd.onclick = ()=>{ detailConfirmingDelete=true; renderDetail(id); };
+    }
+
+    // ---- Naechste-Schritte-Zeilen ----
+    const newStepInput = document.getElementById('newStepText');
+    const addStep = ()=>{
+      const text = (newStepInput.value||'').trim();
+      if(!text) return;
+      createStep(id, text);
+    };
+    newStepInput.addEventListener('focus', ()=>inputsFocused++);
+    newStepInput.addEventListener('blur', ()=>inputsFocused--);
+    newStepInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); addStep(); } });
+    document.getElementById('btnAddStep').onclick = addStep;
+
+    detailview.querySelectorAll('[data-act="stepdone"]').forEach(el=>{
+      el.onchange = ()=> updateStep(el.getAttribute('data-step'), {erledigt: el.checked});
+    });
+    detailview.querySelectorAll('[data-act="stepedit"]').forEach(el=>{
+      el.onclick = ()=>{
+        editingStepIds.add(el.getAttribute('data-step'));
+        renderDetail(id);
+      };
+    });
+    detailview.querySelectorAll('input[id^="stepedit-"]').forEach(el=>{
+      const sid = el.id.replace('stepedit-','');
+      el.addEventListener('focus', ()=>inputsFocused++);
+      el.addEventListener('blur', ()=>inputsFocused--);
+      const save = ()=>{
+        const text = (el.value||'').trim();
+        editingStepIds.delete(sid);
+        if(text) updateStep(sid, {text});
+        else renderDetail(id);
+      };
+      el.addEventListener('keydown', (e)=>{
+        if(e.key==='Enter'){ e.preventDefault(); save(); }
+        if(e.key==='Escape'){ editingStepIds.delete(sid); renderDetail(id); }
+      });
+      el.addEventListener('blur', save);
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+    detailview.querySelectorAll('[data-act="stepdel"]').forEach(el=>{
+      el.onclick = ()=> deleteStep(el.getAttribute('data-step'));
+    });
+    detailview.querySelectorAll('[data-act="stepfile"]').forEach(el=>{
+      el.onchange = async ()=>{
+        const sid = el.getAttribute('data-step');
+        const file = el.files && el.files[0];
+        if(!file) return;
+        const rec = await pbUploadFile(STEPS_COLLECTION, sid, 'anhaenge', file);
+        if(rec) await refreshData(true, true);
+      };
+    });
+    detailview.querySelectorAll('[data-act="stepattachdel"]').forEach(el=>{
+      el.onclick = async ()=>{
+        const sid = el.getAttribute('data-step');
+        const fn = el.getAttribute('data-file');
+        const ok = await pbDeleteFile(STEPS_COLLECTION, sid, 'anhaenge', fn);
+        if(ok) await refreshData(true, true);
+      };
+    });
   }
   function render(){
     const id = currentId();
@@ -639,6 +783,8 @@ textarea{min-height:64px;line-height:1.5}
       listview.hidden = false;
       detailEditing = false;
       detailConfirmingDelete = false;
+      editingStepIds.clear();
+      inputsFocused = 0;
       renderList();
     }
   }
@@ -646,18 +792,28 @@ textarea{min-height:64px;line-height:1.5}
 
   // ---------- data flow ----------
   async function refreshData(silent, forceRender){
-    const items = await pbList();
-    if(items===null){
+    const [projects, steps] = await Promise.all([
+      pbList(DATA_COLLECTION, '?sort=-aktualisiert&perPage=200'),
+      pbList(STEPS_COLLECTION, '?sort=erstellt&perPage=1000')
+    ]);
+    if(projects===null || steps===null){
       if(!silent) offlineEl.hidden = false;
       return false;
     }
     offlineEl.hidden = true;
-    docs = items;
+    docs = projects;
+    const grouped = {};
+    steps.forEach(s=>{
+      const pid = s.projekt;
+      (grouped[pid] = grouped[pid]||[]).push(s);
+    });
+    stepsByProject = grouped;
     loaded = true;
-    // Waehrend ein Formular offen ist (Neuanlage oder Bearbeiten), darf
-    // eine Hintergrund-Aktualisierung (Polling) die Eingabe nicht
-    // wegreissen - sonst verschwindet gerade Diktiertes mitten im Tippen.
-    if(forceRender || !(showNewForm || detailEditing)){
+    // Waehrend ein Formular offen ist (Neuanlage, Projekt-Bearbeiten, ein
+    // Schritt wird gerade benannt oder editiert), darf eine Hintergrund-
+    // Aktualisierung (Polling) die Eingabe nicht wegreissen - sonst
+    // verschwindet gerade Diktiertes mitten im Tippen.
+    if(forceRender || !(showNewForm || detailEditing || inputsFocused>0)){
       render();
     }
     return true;
@@ -673,9 +829,8 @@ textarea{min-height:64px;line-height:1.5}
   async function createProject(){
     const name = (document.getElementById('newName').value||'').trim();
     const stand = document.getElementById('newStand').value||'';
-    const schritte = document.getElementById('newSchritte').value||'';
     if(!name) return;
-    const rec = await pbCreate({name, stand, schritte, status:'offen', erstellt: nowIso(), aktualisiert: nowIso(), quelle:'leitstand'});
+    const rec = await pbCreate(DATA_COLLECTION, {name, stand, status:'offen', erstellt: nowIso(), aktualisiert: nowIso(), quelle:'leitstand'});
     if(rec){
       showNewForm = false;
       await refreshData(true, true);
@@ -683,7 +838,7 @@ textarea{min-height:64px;line-height:1.5}
     }
   }
   async function updateDoc(id, patch, exitEdit){
-    const rec = await pbUpdate(id, Object.assign({}, patch, {aktualisiert: nowIso()}));
+    const rec = await pbUpdate(DATA_COLLECTION, id, Object.assign({}, patch, {aktualisiert: nowIso()}));
     if(rec){
       if(exitEdit) detailEditing = false;
       await refreshData(true, true);
@@ -692,10 +847,26 @@ textarea{min-height:64px;line-height:1.5}
     }
   }
   async function deleteDoc(id){
-    const ok = await pbDelete(id);
+    const ok = await pbDelete(DATA_COLLECTION, id);
     detailConfirmingDelete = false;
     if(ok) await refreshData(true);
     closeDetail();
+  }
+  async function createStep(projectId, text){
+    const rec = await pbCreate(STEPS_COLLECTION, {
+      projekt: projectId, text, erledigt: false,
+      erstellt: nowIso(), aktualisiert: nowIso()
+    });
+    if(rec) await refreshData(true, true);
+  }
+  async function updateStep(stepId, patch){
+    const rec = await pbUpdate(STEPS_COLLECTION, stepId, Object.assign({}, patch, {aktualisiert: nowIso()}));
+    if(rec) await refreshData(true, true);
+    else render();
+  }
+  async function deleteStep(stepId){
+    const ok = await pbDelete(STEPS_COLLECTION, stepId);
+    if(ok) await refreshData(true, true);
   }
   btnNew.onclick = ()=>{ showNewForm = true; renderList(); };
 
