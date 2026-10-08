@@ -61,7 +61,7 @@ a{color:var(--accent)}
 }
 .clock b{color:var(--fg);font-weight:500}
 
-.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;align-items:flex-start}
 .stat{
   background:var(--panel);border:1px solid var(--border);border-radius:10px;
   padding:10px 14px;min-width:108px;flex:1 1 108px;
@@ -71,6 +71,18 @@ a{color:var(--accent)}
   font-variant-numeric:tabular-nums;line-height:1.1;
 }
 .stat .l{color:var(--muted);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;margin-top:4px}
+/* .stat als klickbarer Filter: Status anklicken zeigt nur Projekte mit
+   diesem Status, "Projekte" ganz links setzt den Filter zurueck. Erledigt
+   ist bewusst klein und ganz rechts abgesetzt - weniger wichtig als der
+   Rest fuer die taegliche Arbeit. */
+.statbtn{
+  font-family:inherit;text-align:left;cursor:pointer;color:var(--fg);
+}
+.statbtn:hover{border-color:var(--accent)}
+.statbtn.active{outline:2px solid var(--accent);outline-offset:-1px}
+.stat.small{padding:6px 10px;min-width:0;flex:0 0 auto;margin-left:auto}
+.stat.small .n{font-size:1rem}
+.stat.small .l{font-size:.64rem;margin-top:2px}
 
 .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap}
 .toolbar h2{font-size:.82rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;margin:0}
@@ -284,6 +296,7 @@ textarea{min-height:64px;line-height:1.5}
     </div>
     <div class="topright">
       <div class="clock" id="clock">— —</div>
+      <button class="ghost small" id="btnTrash" title="Papierkorb">&#128465;<span id="trashCount"></span></button>
       <button class="ghost small" id="btnLogout">Abmelden</button>
     </div>
   </div>
@@ -306,6 +319,7 @@ textarea{min-height:64px;line-height:1.5}
   </div>
 
   <div id="detailview" hidden></div>
+  <div id="trashview" hidden></div>
 </div>
 </div>
 
@@ -336,17 +350,25 @@ textarea{min-height:64px;line-height:1.5}
 
   const listview = document.getElementById('listview');
   const detailview = document.getElementById('detailview');
+  const trashview = document.getElementById('trashview');
   const grid = document.getElementById('grid');
   const empty = document.getElementById('empty');
   const statsEl = document.getElementById('stats');
   const offlineEl = document.getElementById('offline');
   const btnNew = document.getElementById('btnNew');
+  const btnTrash = document.getElementById('btnTrash');
+  const trashCountEl = document.getElementById('trashCount');
   const clockEl = document.getElementById('clock');
 
   let docs = [];
   let stepsByProject = {};
   let loaded = false;
   let showNewForm = false;
+  let showTrash = false;
+  // null = alle Projekte, sonst einer der STATUS_ORDER-Schluessel - per
+  // Klick auf die Statuszeile oben in der Liste gesetzt.
+  let statusFilter = null;
+  const trashSelected = new Set();
   let detailEditing = false;
   let detailConfirmingDelete = false;
   const editingStepIds = new Set();
@@ -398,6 +420,12 @@ textarea{min-height:64px;line-height:1.5}
   function stepsFor(projectId){
     return stepsByProject[projectId] || [];
   }
+  // Soft-Delete: geloeschte Projekte bleiben in PocketBase erhalten (Feld
+  // geloescht, Zeitstempel), tauchen aber nicht in der normalen Liste auf,
+  // nur im Papierkorb - bis sie dort wiederhergestellt oder endgueltig
+  // geloescht werden.
+  function activeDocs(){ return docs.filter(d=>!d.geloescht); }
+  function trashedDocs(){ return docs.filter(d=>d.geloescht); }
   // Baut aus der flachen Schritte-Liste einen Baum: jeder Schritt bekommt
   // ein .replies-Array mit den Schritten, deren antwort_auf auf ihn zeigt.
   // Unterstuetzt beliebige Tiefe, auch wenn die Oberflaeche aktuell nur
@@ -559,15 +587,31 @@ textarea{min-height:64px;line-height:1.5}
 
   // ---------- rendering: list ----------
   function renderStats(){
+    const active = activeDocs();
     const counts = {};
     STATUS_ORDER.forEach(k=>counts[k]=0);
-    docs.forEach(d=>{ if(counts[d.status]!=null) counts[d.status]++; });
-    statsEl.innerHTML = STATUS_ORDER.map(k=>(
-      '<div class="stat" style="border-left:3px solid var('+STATUS[k].css+')">'+
-        '<div class="n">'+counts[k]+'</div>'+
-        '<div class="l">'+esc(STATUS[k].label)+'</div>'+
-      '</div>'
+    active.forEach(d=>{ if(counts[d.status]!=null) counts[d.status]++; });
+    const otherKeys = STATUS_ORDER.filter(k=>k!=='erledigt');
+    const allBtn =
+      '<button class="stat statbtn'+(statusFilter===null?' active':'')+'" data-act="filter" data-status="" style="border-left:3px solid var(--accent)">'+
+        '<div class="n">'+active.length+'</div><div class="l">Projekte</div>'+
+      '</button>';
+    const otherBtns = otherKeys.map(k=>(
+      '<button class="stat statbtn'+(statusFilter===k?' active':'')+'" data-act="filter" data-status="'+k+'" style="border-left:3px solid var('+STATUS[k].css+')">'+
+        '<div class="n">'+counts[k]+'</div><div class="l">'+esc(STATUS[k].label)+'</div>'+
+      '</button>'
     )).join('');
+    const doneBtn =
+      '<button class="stat small statbtn'+(statusFilter==='erledigt'?' active':'')+'" data-act="filter" data-status="erledigt" style="border-left:3px solid var('+STATUS.erledigt.css+')">'+
+        '<div class="n">'+counts.erledigt+'</div><div class="l">'+esc(STATUS.erledigt.label)+'</div>'+
+      '</button>';
+    statsEl.innerHTML = allBtn + otherBtns + doneBtn;
+    statsEl.querySelectorAll('[data-act="filter"]').forEach(el=>{
+      el.onclick = ()=>{
+        statusFilter = el.getAttribute('data-status') || null;
+        renderList();
+      };
+    });
   }
   function statusOptions(selected){
     return STATUS_ORDER.map(k=>'<option value="'+k+'"'+(k===selected?' selected':'')+'>'+esc(STATUS[k].label)+'</option>').join('');
@@ -615,10 +659,15 @@ textarea{min-height:64px;line-height:1.5}
   }
   function renderList(){
     renderStats();
-    empty.hidden = !(loaded && docs.length===0 && !showNewForm);
+    const active = activeDocs();
+    const filtered = statusFilter ? active.filter(d=>d.status===statusFilter) : active;
+    empty.hidden = !(loaded && active.length===0 && !showNewForm);
     const parts = [];
     if(showNewForm) parts.push(newFormHtml());
-    docs.forEach(d=>parts.push(cardHtml(d)));
+    if(loaded && active.length>0 && filtered.length===0 && !showNewForm){
+      parts.push('<p class="empty-hint">Keine Projekte mit diesem Status.</p>');
+    }
+    filtered.forEach(d=>parts.push(cardHtml(d)));
     grid.innerHTML = parts.join('');
     grid.querySelectorAll('[data-act="open"]').forEach(el=>{
       el.onclick = ()=> openDetail(el.getAttribute('data-id'));
@@ -961,6 +1010,14 @@ textarea{min-height:64px;line-height:1.5}
     });
   }
   function render(){
+    if(showTrash){
+      listview.hidden = true;
+      detailview.hidden = true;
+      trashview.hidden = false;
+      renderTrash();
+      return;
+    }
+    trashview.hidden = true;
     const id = currentId();
     if(id){
       listview.hidden = true;
@@ -978,6 +1035,60 @@ textarea{min-height:64px;line-height:1.5}
     }
   }
   window.addEventListener('hashchange', render);
+  btnTrash.onclick = ()=>{ showTrash = true; trashSelected.clear(); render(); };
+
+  // ---------- rendering: trash ----------
+  function renderTrash(){
+    const items = trashedDocs();
+    const rows = items.map(d=>{
+      const st = STATUS[d.status] || STATUS.offen;
+      return (
+        '<div class="card" style="border-left-color:var('+st.css+')" data-id="'+d.id+'">'+
+          '<div class="cardtop">'+
+            '<label class="stepcheck"><input type="checkbox" data-act="trashsel" data-id="'+d.id+'"'+(trashSelected.has(d.id)?' checked':'')+'></label>'+
+            '<span class="pill"><span class="sw" style="background:var('+st.css+')"></span>'+esc(st.label)+'</span>'+
+          '</div>'+
+          '<h3>'+esc(d.name)+'</h3>'+
+          '<span class="ts">gelöscht '+fmtTs(d.geloescht)+'</span>'+
+          '<div class="formactions" style="justify-content:flex-start">'+
+            '<button class="ghost small" data-act="restore" data-id="'+d.id+'">&#8634; Wiederherstellen</button>'+
+            '<button class="danger small" data-act="purge" data-id="'+d.id+'">Endgültig löschen</button>'+
+          '</div>'+
+        '</div>'
+      );
+    }).join('');
+    trashview.innerHTML = (
+      '<div class="toolbar">'+
+        '<h2>Papierkorb</h2>'+
+        '<button class="ghost small" id="trashBack">&larr; Zur Übersicht</button>'+
+      '</div>'+
+      (items.length
+        ? '<div class="formactions" style="justify-content:flex-start;margin-bottom:14px">'+
+            '<button class="ghost small" id="trashDeleteSelected"'+(trashSelected.size?'':' disabled')+'>Ausgewählte endgültig löschen ('+trashSelected.size+')</button>'+
+            '<button class="danger small" id="trashEmpty">Papierkorb leeren</button>'+
+          '</div>'
+        : '<p class="empty-hint">Papierkorb ist leer.</p>')+
+      '<div class="grid">'+rows+'</div>'
+    );
+    document.getElementById('trashBack').onclick = ()=>{ showTrash=false; render(); };
+    trashview.querySelectorAll('[data-act="trashsel"]').forEach(el=>{
+      el.onchange = ()=>{
+        const tid = el.getAttribute('data-id');
+        if(el.checked) trashSelected.add(tid); else trashSelected.delete(tid);
+        renderTrash();
+      };
+    });
+    trashview.querySelectorAll('[data-act="restore"]').forEach(el=>{
+      el.onclick = ()=> restoreDoc(el.getAttribute('data-id'));
+    });
+    trashview.querySelectorAll('[data-act="purge"]').forEach(el=>{
+      el.onclick = ()=> purgeDocs([el.getAttribute('data-id')]);
+    });
+    const btnDelSel = document.getElementById('trashDeleteSelected');
+    if(btnDelSel) btnDelSel.onclick = ()=> purgeDocs(Array.from(trashSelected));
+    const btnEmpty = document.getElementById('trashEmpty');
+    if(btnEmpty) btnEmpty.onclick = ()=> purgeDocs(items.map(d=>d.id));
+  }
 
   // ---------- data flow ----------
   async function refreshData(silent, forceRender){
@@ -998,6 +1109,10 @@ textarea{min-height:64px;line-height:1.5}
     });
     stepsByProject = grouped;
     loaded = true;
+    // Papierkorb-Badge immer aktuell, unabhaengig davon, welche Ansicht
+    // gerade offen ist.
+    const trashN = trashedDocs().length;
+    if(trashCountEl) trashCountEl.textContent = trashN ? ' '+trashN : '';
     // Waehrend ein Formular offen ist (Neuanlage, Projekt-Bearbeiten, ein
     // Schritt wird gerade benannt oder editiert), darf eine Hintergrund-
     // Aktualisierung (Polling) die Eingabe nicht wegreissen - sonst
@@ -1035,11 +1150,28 @@ textarea{min-height:64px;line-height:1.5}
       render();
     }
   }
+  // "Löschen" in der Detailansicht ist jetzt ein Soft-Delete - das Projekt
+  // verschwindet aus der Liste, bleibt aber im Papierkorb erhalten, bis es
+  // dort wiederhergestellt oder endgueltig geloescht wird.
   async function deleteDoc(id){
-    const ok = await pbDelete(DATA_COLLECTION, id);
+    const rec = await pbUpdate(DATA_COLLECTION, id, {geloescht: nowIso(), aktualisiert: nowIso()});
     detailConfirmingDelete = false;
-    if(ok) await refreshData(true);
+    if(rec) await refreshData(true);
     closeDetail();
+  }
+  async function restoreDoc(id){
+    await pbUpdate(DATA_COLLECTION, id, {geloescht: null, aktualisiert: nowIso()});
+    await refreshData(true, true);
+  }
+  async function purgeDocs(ids){
+    if(!ids.length) return;
+    const msg = ids.length===1
+      ? 'Dieses Projekt endgültig löschen? Das kann nicht rückgängig gemacht werden.'
+      : ids.length+' Projekte endgültig löschen? Das kann nicht rückgängig gemacht werden.';
+    if(!confirm(msg)) return;
+    await Promise.all(ids.map(id=> pbDelete(DATA_COLLECTION, id)));
+    ids.forEach(id=> trashSelected.delete(id));
+    await refreshData(true, true);
   }
   async function createStep(projectId, text, parentStepId){
     const fields = {

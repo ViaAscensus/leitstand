@@ -22,7 +22,17 @@ Passwort zu raten oder einzufordern.
 `erledigt` / `pausiert`), `stand` (ein Punkt pro Zeile, `\n`-getrennt,
 weiterhin Fließtext/Aufzählung), `quelle`, `erstellt`, `aktualisiert`,
 `claude_auftrag` (Zeitstempel, nullable), `anhaenge` (Dateifeld,
-mehrere, allgemein am Projekt).
+mehrere, allgemein am Projekt), `geloescht` (Zeitstempel, nullable, seit
+08.10.2026 — Soft-Delete, siehe "Papierkorb" unten).
+
+**Soft-Delete (Papierkorb):** Ein gelöschtes Projekt wird nicht sofort aus
+PocketBase entfernt, sondern bekommt `geloescht` gesetzt und verschwindet
+damit aus der normalen Übersicht. Im Papierkorb (Button oben neben
+"Abmelden") lässt es sich wiederherstellen (`geloescht: null`) oder
+endgültig löschen (echtes `DELETE`). Beim Schreiben über die Leitstand-UI
+automatisch so — eine Sitzung, die direkt per HTTP ein Projekt entfernen
+soll, sollte standardmäßig genauso verfahren (PATCH `geloescht` statt
+DELETE), außer Patrick bittet ausdrücklich um endgültiges Löschen.
 
 ### Collection `projekt_schritte` (seit 08.10.2026, ersetzt das frühere `schritte`-Textfeld)
 
