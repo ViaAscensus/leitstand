@@ -36,7 +36,10 @@ Felder: `projekt` (Relation auf `projekte`), `text`, `erledigt` (bool),
 `anhaenge` (Dateifeld, mehrere, eigene je Schritt), `erstellt`,
 `aktualisiert`, `antwort_auf` (Selbst-Relation auf `projekt_schritte`,
 nullable, seit 08.10.2026 — siehe unten), `autor` (select `patrick` /
-`claude`, required, seit 08.10.2026 — siehe "Chat-Darstellung" unten).
+`claude`, required, seit 08.10.2026 — siehe "Chat-Darstellung" unten),
+`position` (number, optional, seit 08.10.2026, nur bei Top-Level-Schritten
+gesetzt — steuert die Reihenfolge der Ideen, siehe "Ideen verschieben"
+unten).
 
 Schritte zu einem Projekt lesen:
 ```
@@ -108,26 +111,72 @@ von der Einrückung selbst) — zwei Zwischenlösungen (Einrücktiefe deckeln,
 dann zusätzlich automatisches Einklappen) haben das Grundproblem nur
 verschoben. Die jetzige Lösung verzichtet komplett auf Verschachtelung:
 
-- **`buildChatSegments()`** zerlegt den `antwort_auf`-Baum eines Projekts
-  in flache Gesprächs-"Segmente": eine Kette von Schritten, die
-  ununterbrochen genau einer auf den anderen antworten. Hat ein Schritt
-  **mehrere** Antworten (z. B. eine Idee, aus der mehrere Varianten
-  wurden — "Post 1/2/3"), endet das laufende Segment dort, und **jede**
-  Antwort startet ein neues eigenes Segment, das mit demselben
-  verzweigenden Schritt als gemeinsamem Kontext beginnt. So bleibt jeder
-  Gesprächsfaden für sich lesbar, statt dass mehrere unabhängige Themen in
-  einer Chronologie durcheinanderspringen (das war Patricks expliziter
-  Punkt gegen eine einzige durchgehende Zeitleiste pro Projekt).
+- **`buildChatGroups()`** gruppiert zunächst nach Top-Level-Idee (jeder
+  `projekt_schritte`-Eintrag ohne `antwort_auf` ist eine eigene Gruppe).
+  Innerhalb einer Gruppe zerlegt sie den `antwort_auf`-Baum in flache
+  Gesprächs-"Segmente": eine Kette von Schritten, die ununterbrochen genau
+  einer auf den anderen antworten. Hat ein Schritt **mehrere** Antworten
+  (z. B. eine Idee, aus der mehrere Varianten wurden — "Post 1/2/3"), endet
+  das laufende Segment dort, und **jede** Antwort startet ein neues eigenes
+  Segment, das mit demselben verzweigenden Schritt als gemeinsamem Kontext
+  beginnt. So bleibt jeder Gesprächsfaden für sich lesbar, statt dass
+  mehrere unabhängige Themen in einer Chronologie durcheinanderspringen
+  (das war Patricks expliziter Punkt gegen eine einzige durchgehende
+  Zeitleiste pro Projekt).
 - Jedes Segment wird als eigene `.chatbox` gerendert — eine Liste von
   Chat-Blasen (`bubbleHtml()`), **Patrick links, Claude rechts** je nach
   `autor`-Feld (siehe oben) —, darunter ein immer sichtbares
   Antwort-Eingabefeld, das an die letzte Nachricht des Segments anhängt
   (`antwort_auf` = deren ID). Da innerhalb eines Segments nie verschachtelt
   wird, bleibt die Breite unabhängig von der Länge der Konversation
-  konstant — kein Einklappen mehr nötig.
-- Mehrere `projekt_schritte` ohne `antwort_auf` (eigenständige, neue Ideen)
-  erzeugen entsprechend mehrere unabhängige `.chatbox`-Blöcke
-  untereinander.
+  konstant.
+- **Einklappen einer Box** (seit 08.10.2026, zweite Iteration): Jede Box mit
+  mehr als einer Nachricht lässt sich per Klick bis auf die Ausgangsfrage
+  einklappen — unabhängig vom Alter oder der Länge des Gesprächs. Schlüssel
+  dafür ist die **letzte** Nachricht des Segments (`lastId`), nicht die
+  erste — die erste teilen sich oft mehrere Boxen derselben Idee (z. B. alle
+  drei Post-Varianten beginnen mit derselben Ausgangsidee), mit der ersten
+  als Schlüssel klappten früher versehentlich alle gemeinsam auf.
+
+### Schritt-Nummern (seit 08.10.2026)
+
+Jede `.chatbox` zeigt oben "Schritt N" — fortlaufend über **alle** Boxen
+eines Projekts hinweg nummeriert (nicht pro Idee neu bei 1), damit Patrick
+in einer Unterhaltung eindeutig "Schritt 3" sagen kann, auch wenn mehrere
+Varianten derselben Idee im selben Projekt stehen (das war genau der
+Auslöser: er wollte sich innerhalb eines Themas wie "social media" auf
+einen bestimmten Zweig beziehen können, ohne dass Claude ihn mit einem
+Nachbarzweig verwechselt).
+
+**Eine Sitzung, die auf "Schritt N" reagieren soll, muss dieselbe Zahl
+berechnen können wie die Oberfläche** — die Nummer steht nirgends direkt
+als Feld in PocketBase, sie ergibt sich deterministisch aus:
+1. Top-Level-Schritte (ohne `antwort_auf`) nach `position` sortieren
+   (aufsteigend; bei fehlender/gleicher `position` nach `erstellt`).
+2. Für jeden davon der Reihe nach seinen `antwort_auf`-Baum durchlaufen und
+   in flache Segmente zerlegen (siehe `buildChatGroups()` oben — bei einer
+   Verzweigung ein Segment pro Antwort, alle mit dem verzweigenden Schritt
+   als erster Nachricht).
+3. Jedes so entstehende Segment bekommt die nächste fortlaufende Nummer,
+   in exakt der Reihenfolge, in der es in Schritt 2 erzeugt wird.
+
+Entspricht 1:1 dem, was `leitstand_projekt_schritte` zurückgibt (sortiert
+nach `erstellt`) plus `antwort_auf`/`position` — mit diesen Feldern lässt
+sich die Nummer jederzeit nachrechnen, ohne die Web-UI zu öffnen.
+
+### Ideen verschieben (seit 08.10.2026)
+
+Top-Level-Ideen (nicht einzelne Antworten) lassen sich per Pfeil-Buttons
+(`moveIdea()`) umsortieren. Steuert `position` (number, optional) auf
+`projekt_schritte` — nur bei Top-Level-Schritten gesetzt, bei Antworten
+irrelevant. Neue Ideen aus der Web-UI bekommen automatisch
+`position: Date.now()` (hängt ans Ende an, ohne vorher nachzufragen); ein
+Verschieben nummeriert alle Top-Level-Ideen des Projekts neu durch
+(0, 10, 20, …), robust auch wenn alte Datensätze noch keine `position`
+hatten. **Wichtig:** Verschieben ändert die Schritt-Nummern aller Boxen ab
+der verschobenen Stelle — eine vorher notierte "Schritt 3" kann danach
+etwas anderes meinen, im Zweifel neu nachsehen statt sich auf eine alte
+Notiz zu verlassen.
 
 API-Beispiel (api_clients-Token `$TOKEN`):
 ```

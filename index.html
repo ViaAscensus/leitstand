@@ -176,21 +176,32 @@ textarea{min-height:64px;line-height:1.5}
 .uploadmsg{font-size:.78rem;color:var(--muted);margin:6px 0 0}
 .uploadmsg.err{color:var(--s-pausiert)}
 
-.steplist{display:flex;flex-direction:column;gap:14px;margin-bottom:12px}
+.steplist{display:flex;flex-direction:column;gap:18px;margin-bottom:12px}
 /*
   Jede Idee, die sich in mehrere Antwortzweige aufspaltet, wird zu mehreren
   .chatbox-Bloecken (einer je Zweig) statt einem gemeinsamen Baum - siehe
-  buildChatSegments(). Innerhalb eines Blocks ist die Konversation immer
+  buildChatGroups(). Innerhalb eines Blocks ist die Konversation immer
   linear (keine Verschachtelung mehr noetig), deshalb reicht links/rechts
   wie in einem Messenger: Patrick links, Claude rechts. Das loest das
   Problem frueherer Versionen (immer schmalere Spalte bei tiefen Antwort-
-  ketten) an der Wurzel, weil hier gar nicht mehr eingerueckt wird.
+  ketten) an der Wurzel, weil hier gar nicht mehr eingerueckt wird. Alle
+  Boxen, die aus derselben Idee stammen, bilden eine .ideagroup - das ist
+  die Einheit, die sich per Pfeiltasten verschieben laesst.
 */
+.ideagroup{display:flex;flex-direction:column;gap:10px}
+.ideagrouphead{display:flex;gap:4px;align-items:center}
+.ideamove{
+  background:transparent;border:1px solid var(--border);color:var(--muted);
+  border-radius:6px;cursor:pointer;font-size:.8rem;padding:2px 8px;line-height:1.4;
+}
+.ideamove:hover:not(:disabled){color:var(--accent);border-color:var(--accent)}
+.ideamove:disabled{opacity:.3;cursor:default}
 .chatbox{
   background:var(--sand-dim);border:2px solid var(--sand);border-radius:10px;
   padding:12px;display:flex;flex-direction:column;gap:10px;
 }
-.chatboxhead{display:flex;justify-content:flex-end}
+.chatboxhead{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.chatboxnr{color:var(--sand);font-size:.72rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
 .chatcollapse-toggle{
   background:transparent;border:none;color:var(--sand);font-size:.76rem;
   cursor:pointer;padding:2px 0;width:fit-content;
@@ -653,29 +664,45 @@ textarea{min-height:64px;line-height:1.5}
   // Chronologie zu vermischen (das war explizit der Punkt: eine
   // durchgehende Chronologie ueber mehrere unabhaengige Ideen hinweg
   // springt staendig zwischen Themen).
-  function buildChatSegments(topLevelSteps){
-    const segments = [];
-    function walk(step, carried){
-      const messages = carried.concat([step]);
-      const children = Array.isArray(step.replies) ? step.replies : [];
-      if(children.length<=1){
-        if(children.length===1){
-          walk(children[0], messages);
+  // Gruppiert nach Top-Level-Idee (eigene Gruppe je Schritt ohne
+  // antwort_auf), damit sich mehrere Varianten, die aus derselben Idee
+  // entstanden sind (z.B. "Post 1/2/3"), zusammen verschieben lassen statt
+  // einzeln auseinandergerissen zu werden - siehe "Ideen verschieben" unten.
+  function buildChatGroups(topLevelSteps){
+    return topLevelSteps.map(top=>{
+      const segments = [];
+      function walk(step, carried){
+        const messages = carried.concat([step]);
+        const children = Array.isArray(step.replies) ? step.replies : [];
+        if(children.length<=1){
+          if(children.length===1){
+            walk(children[0], messages);
+          } else {
+            segments.push(messages);
+          }
         } else {
-          segments.push(messages);
+          // Nur als eigenes Segment sichern, wenn vor der Verzweigung schon
+          // ein echtes Gespraech stand - der Verzweigungsschritt allein
+          // (z.B. die urspruengliche Idee, aus der direkt mehrere Varianten
+          // kamen) wuerde sonst als sinnloses 1-Nachrichten-Segment
+          // auftauchen, obwohl er ohnehin als Kontext in jedem neuen
+          // Segment steht.
+          if(messages.length>1) segments.push(messages);
+          children.forEach(child=> walk(child, [step]));
         }
-      } else {
-        // Nur als eigenes Segment sichern, wenn vor der Verzweigung schon
-        // ein echtes Gespraech stand - der Verzweigungsschritt allein (z.B.
-        // die urspruengliche Idee, aus der direkt mehrere Varianten kamen)
-        // wuerde sonst als sinnloses 1-Nachrichten-Segment auftauchen,
-        // obwohl er ohnehin als Kontext in jedem der neuen Segmente steht.
-        if(messages.length>1) segments.push(messages);
-        children.forEach(child=> walk(child, [step]));
       }
-    }
-    topLevelSteps.forEach(s=> walk(s, []));
-    return segments;
+      walk(top, []);
+      return {topId: top.id, segments};
+    });
+  }
+  // Top-Level-Schritte (eigenstaendige Ideen) nach position sortiert, mit
+  // erstellt als Fallback fuer Datensaetze ohne gesetzte position.
+  function sortTopLevel(steps){
+    return steps.slice().sort((a,b)=>{
+      const pa = a.position||0, pb = b.position||0;
+      if(pa!==pb) return pa-pb;
+      return (a.erstellt||'') < (b.erstellt||'') ? -1 : 1;
+    });
   }
   function bubbleHtml(step){
     const isEditing = editingStepIds.has(step.id);
@@ -700,21 +727,24 @@ textarea{min-height:64px;line-height:1.5}
       '</div>'
     );
   }
-  function chatSegmentHtml(messages){
-    const firstId = messages[0].id;
+  function chatSegmentHtml(messages, stepNumber){
+    // lastId ist projektweit eindeutig je Segment (jeder Schritt schliesst
+    // hoechstens ein Segment ab) - anders als die erste Nachricht, die sich
+    // mehrere Zweige aus derselben Idee teilen koennen. Mit firstId als
+    // Schluessel klappten frueher alle Zweige gemeinsam auf/zu.
     const lastId = messages[messages.length-1].id;
-    const collapsed = chatboxCollapsed.has(firstId) && messages.length>1;
+    const collapsed = chatboxCollapsed.has(lastId) && messages.length>1;
     const shown = collapsed ? [messages[0]] : messages;
-    const headHtml = messages.length>1
-      ? '<div class="chatboxhead"><button class="chatcollapse-toggle" data-act="chatcollapse" data-box="'+firstId+'">'+
+    const toggleHtml = messages.length>1
+      ? '<button class="chatcollapse-toggle" data-act="chatcollapse" data-box="'+lastId+'">'+
           (collapsed ? '&#9656; '+(messages.length-1)+' weitere Nachricht'+(messages.length-1===1?'':'en')+' anzeigen' : '&#9662; Bis zur Ausgangsfrage einklappen')+
-        '</button></div>'
+        '</button>'
       : '';
     const composerHtml = collapsed ? '' :
       '<div class="composerrow"><input class="textin" id="composer-'+lastId+'" placeholder="Antworten…"><button class="primary small" data-act="composersend" data-parent="'+lastId+'">Senden</button></div>';
     return (
       '<div class="chatbox">'+
-        headHtml+
+        '<div class="chatboxhead"><span class="chatboxnr">Schritt '+stepNumber+'</span>'+toggleHtml+'</div>'+
         '<div class="chatmessages">'+shown.map(bubbleHtml).join('')+'</div>'+
         composerHtml+
       '</div>'
@@ -736,10 +766,22 @@ textarea{min-height:64px;line-height:1.5}
           '<button class="attachdel" data-act="attachdel" data-file="'+esc(fn)+'" title="Anhang löschen">&times;</button></div>'
         )).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Anhänge.</p>';
-    const stepTree = buildStepTree(stepsFor(d.id));
-    const segments = buildChatSegments(stepTree);
-    const stepsHtml = segments.length
-      ? '<div class="steplist">'+segments.map(chatSegmentHtml).join('')+'</div>'
+    const stepTree = sortTopLevel(buildStepTree(stepsFor(d.id)));
+    const groups = buildChatGroups(stepTree);
+    let stepNr = 0;
+    const stepsHtml = groups.length
+      ? '<div class="steplist">'+groups.map((g,gi)=>{
+          const boxesHtml = g.segments.map(seg=>{ stepNr++; return chatSegmentHtml(seg, stepNr); }).join('');
+          return (
+            '<div class="ideagroup" data-top="'+g.topId+'">'+
+              '<div class="ideagrouphead">'+
+                '<button class="ideamove" data-act="ideaup" data-top="'+g.topId+'" title="Idee nach oben"'+(gi===0?' disabled':'')+'>&uarr;</button>'+
+                '<button class="ideamove" data-act="ideadown" data-top="'+g.topId+'" title="Idee nach unten"'+(gi===groups.length-1?' disabled':'')+'>&darr;</button>'+
+              '</div>'+
+              boxesHtml+
+            '</div>'
+          );
+        }).join('')+'</div>'
       : '<p class="empty-hint">Noch keine Schritte erfasst.</p>';
     return (
       '<div class="detailpanel" style="border-left-color:var('+st.css+')">'+
@@ -911,6 +953,12 @@ textarea{min-height:64px;line-height:1.5}
         renderDetail(id);
       };
     });
+    detailview.querySelectorAll('[data-act="ideaup"]').forEach(el=>{
+      el.onclick = ()=> moveIdea(id, el.getAttribute('data-top'), -1);
+    });
+    detailview.querySelectorAll('[data-act="ideadown"]').forEach(el=>{
+      el.onclick = ()=> moveIdea(id, el.getAttribute('data-top'), 1);
+    });
   }
   function render(){
     const id = currentId();
@@ -1002,7 +1050,16 @@ textarea{min-height:64px;line-height:1.5}
       projekt: projectId, text, erledigt: false, autor: 'patrick',
       erstellt: nowIso(), aktualisiert: nowIso()
     };
-    if(parentStepId) fields.antwort_auf = parentStepId;
+    if(parentStepId){
+      fields.antwort_auf = parentStepId;
+    } else {
+      // Nur Top-Level-Ideen tragen eine position (steuert die Reihenfolge
+      // der Ideen-Gruppen) - Date.now() haengt eine neue Idee automatisch
+      // ans Ende an, ohne vorher die bestehenden Positionen abfragen zu
+      // muessen. Antworten brauchen keine eigene position, ihre Reihenfolge
+      // folgt immer erstellt (Chat-Chronologie).
+      fields.position = Date.now();
+    }
     const rec = await pbCreate(STEPS_COLLECTION, fields);
     if(rec) await refreshData(true, true);
   }
@@ -1010,6 +1067,23 @@ textarea{min-height:64px;line-height:1.5}
     const rec = await pbUpdate(STEPS_COLLECTION, stepId, Object.assign({}, patch, {aktualisiert: nowIso()}));
     if(rec) await refreshData(true, true);
     else render();
+  }
+  // Verschiebt eine Top-Level-Idee um eine Position (dir: -1 nach oben,
+  // +1 nach unten) und nummeriert danach alle Top-Level-Ideen des Projekts
+  // neu durch (0,10,20,...) - robuster als ein reiner Werte-Tausch, der bei
+  // noch nicht befuellten oder zufaellig gleichen position-Werten wirkungslos
+  // waere.
+  async function moveIdea(projectId, topId, dir){
+    const top = sortTopLevel(buildStepTree(stepsFor(projectId)));
+    const idx = top.findIndex(s=>s.id===topId);
+    const otherIdx = idx+dir;
+    if(idx<0 || otherIdx<0 || otherIdx>=top.length) return;
+    const reordered = top.slice();
+    const tmp = reordered[idx]; reordered[idx] = reordered[otherIdx]; reordered[otherIdx] = tmp;
+    await Promise.all(reordered.map((s,i)=>
+      pbUpdate(STEPS_COLLECTION, s.id, {position: i*10, aktualisiert: nowIso()})
+    ));
+    await refreshData(true, true);
   }
   async function deleteStep(stepId){
     const ok = await pbDelete(STEPS_COLLECTION, stepId);
